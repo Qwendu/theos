@@ -1,0 +1,29 @@
+
+#import "Theos_Filesystem";
+#import "Basic";
+#import "File";
+
+#run {
+    disk_image := read_entire_file("theos");
+    fs_user_data = disk_image.data;
+
+    write_block = (block_index: int, block: *Disk_Block, disk_image: *void) {
+        offset := block_index * FS_BLOCKSIZE + FS_BASE_ADDRESS;
+        memcpy(disk_image + offset, block, FS_BLOCKSIZE);
+    };
+
+    read_block = (block_index: int, block: *Disk_Block, disk_image: *void) {
+        offset := block_index * FS_BLOCKSIZE + FS_BASE_ADDRESS;
+        memcpy(block, disk_image + offset, FS_BLOCKSIZE);
+    };
+
+    get_time = (user: *void) -> Apollo_Time {
+        return current_time_consensus();
+    };
+
+    initialize_filesystem();
+
+    file := read_file("log");
+    print("%\n", cast(string) file);
+    // Do stuff.
+}
