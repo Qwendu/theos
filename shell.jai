@@ -77,6 +77,7 @@ init_shell :: (font: Pnm) {
 update_shell :: () {
     shell_handle_keypress();
     shell_handle_mouse();
+
     time := cmos_get_calendar_time();
     if xx (time.second % 2) == shell.command_text.point {
         shell.command_text.point = !shell.command_text.point;

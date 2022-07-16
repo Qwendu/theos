@@ -1,4 +1,0 @@
-
-#import "Basic";
-
-#run print("%\n", type_of(#char " "));

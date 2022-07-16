@@ -3,8 +3,8 @@ Basic  :: #import "Basic";
 String :: #import "String";
 
 #import "Machine_X64";
-#import "Elf";
-#import "Theos_Filesystem";
+#import,file "modules/Elf.jai";
+#import,file "modules/Theos_Filesystem.jai";
 
 #load "pci.jai";
 #load "graphics.jai";
@@ -77,7 +77,7 @@ Boot_Data :: struct {
 boot_data: Boot_Data;
 boot_drive: *Mass_Storage_Device;
 
-global_kernel_context: *type_of(context);
+global_kernel_context: *Context;
 
 #program_export
 kernel_entry :: () {
@@ -100,7 +100,7 @@ kernel_entry :: () {
         page_table_init();
         enable_ps2();
         cmos_enable_irq(true);
-        // cmos_set_rate(3);
+        cmos_set_rate(15);
         enable_simd(cpu);
 
         acpi_init();
@@ -108,9 +108,9 @@ kernel_entry :: () {
 
         pci_scan_all_devices();
         discover_mass_storage_devices();
-
         assert(disks.count == 1);
         boot_drive = *disks[0];
+        // shutdown_emulator();
 
         read_block = (block_index: int, block: *Disk_Block, *void) {
             location := FS_BASE_ADDRESS + block_index * FS_BLOCKSIZE;
@@ -141,6 +141,8 @@ kernel_entry :: () {
         ct := cmos_get_calendar_time();
         boot_time = theos_calendar_to_apollo(ct);
 
+        initialize_task_manager();
+
         #if !ENABLE_VESA {
             print("This is where we start entering the shell.\n");
             print("However, we're in VGA debugging mode from where we can't draw anything, so we're going to halt.\n");
@@ -150,8 +152,8 @@ kernel_entry :: () {
         init_graphics(*boot_data);
         init_shell(font);
 
-        // initialize_task_manager();
-        // make_task("name", null);
+        make_task(work, *"Task 1");
+        yield();
 
         startup := read_file("system/startup.shell");
         commands := String.split(cast(string) startup, "\n");
@@ -246,34 +248,27 @@ max :: (a: $T, b: T) -> T { if a > b return a; return b; }
 
 crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
     #asm {
-        mov rcx: gpr === c, count;
-        mov rdi: gpr === di, target;
-        mov rax: gpr === a, value;
-    }
+        cld;
 
-    #bytes .[0xf3, 0xaa]; // rep stosb
-    // v := cast(u8) value;
-    // for 0..cast(int) count - 1 {
-    //     target[it] = v;
-    // }
+        count  === c;
+        target === di;
+        value  === a;
+        rep_stos.b target, value, count;
+    }
 
     return target;
 }
 
 crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     #asm {
-        mov rsi: gpr === si, src;
-        mov rdi: gpr === di, dst;
-        mov rcx: gpr === c, count;
+        cld;
+
+        src   === si;
+        dst   === di;
+        count === c;
+        rep_movs.b dst, src, count;
     }
 
-    #bytes .[0xf3, 0xa4]; // rep movsb
-
-    // d := cast(*u8) dst;
-    // s := cast(*u8) src;
-    // for 0..cast(int) count - 1 {
-    //     d[it] = s[it];
-    // }
     return dst;
 }
 
@@ -390,13 +385,13 @@ enable_simd :: (cpu: Cpu_X86) {
 //        set_cr4 cr4;
 //    }
 //
-//    if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
-//        index: gpr === c;
-//
-//        xgetbv xcr0_h:, xcr0_l:, index;
-//        or xcr0_l, 7;
-//        xsetbv xcr0_h, xcr0_l, index;
-//    }
+    if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
+        index: gpr === c;
+
+        xgetbv xcr0_h:, xcr0_l:, index;
+        or xcr0_l, 7;
+        xsetbv xcr0_h, xcr0_l, index;
+    }
 }
 
 BochsBreak :: () #expand {
@@ -452,27 +447,12 @@ make_gdt_entry :: (base: u64, limit: u32, flags: u64) -> u64 {
     return entry;
 }
 
-Task_State_Segment :: struct {
-    reserved_0: u32;
-    rsp:        [3] u64 #align 4;
-    reserved_1: [2] u32;
-    ist:        [7] u64 #align 4;
-    reserved_2: [2] u32;
-    reserved_3: u16;
-    iobp:       u16;
-}
-#assert(size_of(Task_State_Segment) == 0x68);
-
-tss: Task_State_Segment #align 0x80;
-
 gdt_init :: () {
     using Gdt_Entry_Flags;
 
     gdt[0] = 0x0;
     gdt[1] = xx (READ_WRITE | PRESENT | DESCRIPTOR_TYPE | LONG_MODE_CODE | EXECUTABLE);
     gdt[2] = xx (READ_WRITE | PRESENT | DESCRIPTOR_TYPE);
-    gdt[3] = xx make_gdt_entry(xx *tss, size_of(Task_State_Segment), xx SIZE | xx (0x89 << 40));
-    gdt[4] = 0xffff_ffff;
 
     gdtr: struct {
         limit: u16;
@@ -484,21 +464,9 @@ gdt_init :: () {
 
     gdtrp := *gdtr;
 
-    tss.ist[0] = KERNEL_BASE + 0x400_000;
-    tss.ist[1] = KERNEL_BASE + 0x400_000 - 0x1000;
-    tss.ist[2] = KERNEL_BASE + 0x400_000 - 0x2000;
-    tss.ist[3] = KERNEL_BASE + 0x400_000 - 0x3000;
-    tss.ist[4] = KERNEL_BASE + 0x400_000 - 0x4000;
-    tss.ist[5] = KERNEL_BASE + 0x400_000 - 0x5000;
-    tss.ist[6] = KERNEL_BASE + 0x400_000 - 0x6000;
-
-    tss.iobp = size_of(Task_State_Segment);
-
     #asm {
         lgdt [gdtrp];
-        mov.w rax: gpr === a, 0x18;
     }
-    #bytes .[0x0f, 0x00, 0xd8]; // ltr ax
 }
 
 
@@ -559,7 +527,7 @@ idt_add_handler :: (address: *void, index: int) {
     entry.offset_2  = xx (_address >> 16) & 0xffff;
     entry.offset_3  = xx (_address >> 32) & 0xffffffff;
     entry.selector  = 0b00001000;
-    entry.ist       = 0x1;
+    entry.ist       = 0x0;
     entry.flags     = 0x8e;
     entry.reserved  = 0x0;
 
@@ -572,12 +540,6 @@ idt_init :: () {
 
     register_generated_isrs();
     idt_add_handler(xx page_fault_handler, 0x0e);
-
-    idt[0x21].ist = 0x2;
-    idt[0x28].ist = 0x3;
-    idt[0x2c].ist = 0x4;
-    idt[0x2e].ist = 0x5;
-    idt[0x80].ist = 0x6;
 
     address := *idt_desc;
     #asm {
@@ -1097,12 +1059,12 @@ acpi_validate_table :: (header: *Acpi_Table_Header) -> bool {
 
 
 Hpet_Acpi_Table :: struct {
-    #as header: Acpi_Table_Header #align 1;
-    hardware_revision: u8 #align 1;
-    flags: u8 #align 1;
+    #as header: Acpi_Table_Header;
+    hardware_revision: u8;
+    flags: u8;
     vendor: u16 #align 1;
-    address_space: enum u8 { MAIN_MEMORY :: 0; IO :: 1; } #align 1;
-    some_stuff: [3] u8 #align 1;
+    address_space: enum u8 { MAIN_MEMORY :: 0; IO :: 1; };
+    some_stuff: [3] u8;
     base_address: u64 #align 1;
 }
 
@@ -1438,6 +1400,7 @@ page_fault_handler :: () #no_call {
         // print("SS:     "); print_hex(stack_data.ss);    print("\n");
 
         paint_screen();
+#asm { hlt; }
 
         #if PAGE_FAULT_STACK_TRACE {
             print("\nStack trace:\n");
@@ -1460,7 +1423,6 @@ page_fault_handler :: () #no_call {
     }
 
     #asm {
-        sti;
         add rsp, 0x200;
     }
 
@@ -1708,6 +1670,10 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
     syscall_context.assertion_failed = assertion_failed;
 
     push_context syscall_context {
+        old := global_kernel_context;
+        global_kernel_context = *context;
+        defer global_kernel_context = old;
+
         if data.rax == xx WRITE_STRING {
             text: string;
             text.data = xx data.rbx;
@@ -1794,7 +1760,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         else if data.rax == xx INPUT {
             target := cast(*Any) data.rbx;
             << target = shell.input_pipe.value;
-            shell.input_pipe.value = Any.{};
+            shell.input_pipe.value = null;
         }
 
         else if data.rax == xx MAP_MEMORY {

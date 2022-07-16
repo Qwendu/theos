@@ -248,10 +248,10 @@ pci_print_device_list :: () {
 
 Mass_Storage_Device :: struct {
     controller_type: enum {
-        NONE :: 0x0;
-        IDE  :: 0x1;
-        AHCI :: 0x2;
-        NVME :: 0x3;
+        INVALID :: 0x0;
+        IDE     :: 0x1;
+        AHCI    :: 0x2;
+        NVME    :: 0x3;
     }
 
     supports_busmastering: bool;
@@ -262,6 +262,7 @@ Mass_Storage_Device :: struct {
 
     union {
         #as ide: Ide;
+        #as ahci: Ahci;
     }
 
     Ide :: struct {
@@ -269,6 +270,11 @@ Mass_Storage_Device :: struct {
         io_base: u16;
         control_base: u16;
         model_string: [40] u8;
+    }
+
+    Ahci :: struct {
+        command_list: *Ahci_Command_Table;
+        received_fis: *Ahci_Received_Fis;
     }
 }
 
@@ -304,33 +310,37 @@ discover_mass_storage_devices :: () {
         info := pci_device_info[device];
         if info.header.class_code != .MASS_STORAGE continue;
 
-        // Subclass 0x1 (IDE) might be very similar to subclass 0x5 (ATA), but I am not sure
+        // Subclass 0x1 (IDE) might be compatible with subclass 0x5 (ATA), but I am not sure
         if info.header.subclass == PCI_SUBCLASS_IDE {
             init_ide_controller(info, *discovered);
         }
 
-        // Subclass 0x6 is an AHCI controller
         if info.header.subclass == PCI_SUBCLASS_SATA {
-
+            init_ahci_controller(info, *discovered);
         }
     }
     // pic_enable_irq(.PRIMARY_ATA);
 }
 
 init_ide_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device) {
-    // Detect bus mastering (DMA)
-    command_status := pci_read_config_register(info, 0x1);
-    pci_write_config_register(info, 0x1, command_status | (1 << 2));
-
-    base, limit, io_space := pci_get_base_address(info, bar = 4);
-
-    assert(io_space);
-    assert(limit == 16);
-
     prog_if := info.header.prog_if;
 
-    bus_master_base := cast(u16) base;
-    bus_master_enable := prog_if & (1 << 7) > 0;
+    // Detect bus mastering (DMA)
+    bus_master_support := prog_if & 0x80 > 0;
+    bus_master_base: u16;
+
+    if bus_master_support {
+        // Enable bus mastering
+        command_status := pci_read_config_register(info, 0x1);
+        pci_write_config_register(info, 0x1, command_status | xx Pci_Command.BUS_MASTER);
+
+        base, limit, io_space := pci_get_base_address(info, bar = 4);
+
+        assert(io_space);
+        assert(limit == 16);
+
+        bus_master_base = xx base;
+    }
 
     // Scan the two four drive slots of a standard IDE controller.
     for channel: 0..1 {
@@ -394,7 +404,7 @@ init_ide_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device
             msd.sector_count = cast(int) id.data[30];
 
             msd.bus_master_base = bus_master_base + cast(u16) channel * 8;
-            msd.supports_busmastering = bus_master_enable;
+            msd.supports_busmastering = bus_master_support;
         }
     }
 }
@@ -446,7 +456,7 @@ ide_bus_master_transfer :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_D
 
 ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, physical: u64, sector_lba: u32, sector_count: int) {
     using Ide_Register;
-    using Ide_Bus_Master_Port;
+    using Pci_Bus_Master_Port;
     if !sector_count return;
 
     table: Physical_Region_Descriptor #align 8;
@@ -516,12 +526,10 @@ ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Tr
 
 #program_export
 ata_interrupt :: () #c_call {
-    using Ide_Bus_Master_Port;
-
     pic_end_of_interrupt(.PRIMARY_ATA);
 }
 
-Ide_Bus_Master_Port :: enum {
+Pci_Bus_Master_Port :: enum {
     PRIMARY_COMMAND :: 0x0;
     PRIMARY_STATUS :: 0x2;
     PRIMARY_PRD :: 0x4;
@@ -689,6 +697,300 @@ ata_pio_write :: (buffer: *u16, start_sector: u32, sector_count: u8) -> Ide_Erro
     return ata_get_error();
 }
 */
+
+
+
+SSTS_DET_ESTABLISHED :: 0x3;
+SSTS_IPM_ACTIVE :: 0x1;
+
+init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device) {
+    context.print_style.default_format_struct.use_newlines_if_long_form = true;
+
+    // command_status := pci_read_config_register(info, 0x1);
+    // command_status |= xx (Pci_Command.BUS_MASTER | .MEMORY_SPACE);
+    // command_status &= xx ~.INTERRUPT_DISABLE;
+    // pci_write_config_register(info, 0x1, xx command_status);
+
+    // BARs 1 to 4 are used for IDE compatibility, 5 is the AHCI base address
+    base, limit, io_space := pci_get_base_address(info, bar = 5);
+    assert(base != 0);
+    assert(!io_space);
+
+    using Page_Flags;
+    uncacheable_flags := READ_WRITE | PRESENT | CACHE_DISABLE;
+    m := map_memory(limit + 0x1000, physical_address = base, flags = uncacheable_flags);
+    offset_in_page := base % 0x1000;
+    ahci: *Ahci_Memory_Region = xx (m + offset_in_page);
+
+    cap := ahci.host_capabilities;
+
+    ahci_only := cap & .SUPPORTS_AHCI_ONLY > 0;
+    if !ahci_only {
+        ahci.global_host_control |= 0x1;
+    }
+
+    num_ports := cast(int) (cap & 0b11111) + 1;
+    command_slot_count := cast(int) ((cap >> 8) & 0b11111) + 1; // Can't bit shift by an enum value
+
+    assert(cap & ._64BIT_ADDRESSING > 0, "AHCI controller without 64bit addressing not supported");
+
+    for 0..num_ports - 1 {
+        assert(ahci.ports_implemented & (1 << it) > 0, "Implemented AHCI ports are not contiguous");
+        port := *ahci.ports[it];
+
+        assert(port.command_status & .SPIN_UP > 0, "AHCI port not spun up");
+
+        // Don't know what to do in case of staggered spin up
+        // if ahci.host_capabilities & .STAGGERED_SPIN_UP > 0 {
+        // }
+
+        detection := port.sata_status & 0xf;
+        power_mgmt := (port.sata_status >> 8) & 0xf;
+        if detection != SSTS_DET_ESTABLISHED continue;
+        assert(power_mgmt == SSTS_IPM_ACTIVE);
+
+        assert(port.signature == .ATA, "AHCI: We only handle the \"ATA\" device signature");
+
+        // Allocate received FIS and command list for this port
+        dev: Mass_Storage_Device.Ahci;
+
+        list_size := size_of(Ahci_Command_Header) * command_slot_count;
+        dev.command_list == map_memory(list_size, flags = uncacheable_flags);
+        dev.received_fis == map_memory(size_of(Ahci_Received_Fis), flags = uncacheable_flags);
+
+        port.command_list_base = get_physical_address(dev.command_list);
+        port.fis_base = get_physical_address(dev.received_fis);
+
+        table_region: *Ahci_Command_Table = map_memory(size_of(Ahci_Command_Table) * command_slot_count);
+        assert(xx table_region % 128 == 0);
+
+        for 0..command_slot_count - 1 {
+            header := cast(*Ahci_Command_Header) dev.command_list + it;
+            header.command_table_base = xx (table_region + it);
+        }
+
+        using Ahci_Port_Command_Status;
+        port.command_status |= START | FIS_RECEIVE_ENABLE;
+
+        // Issue IDENTIFY
+        fis: Ahci_Command_Fis;
+        fis.command = xx Ide_Command.IDENTIFY;
+        fis.flags = .IS_COMMAND;
+
+        dev.command_list[0].fis = fis;
+
+        assert(port.command_issue & 0x1 == 0);
+        port.command_issue |= 0x1;
+
+        // Read identification space
+
+        msd := Basic.array_add(drives);
+        msd.controller_type = .AHCI;
+        msd.ahci = dev;
+    }
+}
+
+Ahci_Command_Fis :: struct {
+    fis_type: Fis_Type = .REGISTER_H2D;
+    flags: enum u8 { NONE :: 0x0; IS_COMMAND :: 0x80; };
+    command: u8;
+    features_low: u8;
+    lba_low: u8;
+    lba_mid: u8;
+    lba_high: u8;
+    device: u8;
+    lba_really_high: u8;
+    lba_super_high: u8;
+    lba_super_duper_high: u8;
+    features_high: u8;
+    sector_count_low: u8;
+    sector_count_high: u8;
+    icc: u8;
+    control: u8;
+    reserved: u32;
+}
+
+Ahci_Command_Header :: struct {
+    flags: u16;
+    prd_table_length: u16;
+    prd_byte_count: u32;
+    command_table_base: u64;
+    reserved: [4] u32;
+}
+
+Ahci_Command_Table :: struct {
+    fis: Ahci_Command_Fis;
+    reserved_1: [0x40 - size_of(Ahci_Command_Fis)] u8;
+    atapi: [0x10] u8;
+    reserved_2: [0x30] u8;
+}
+
+Fis_Type :: enum u8 {
+    INVALID      :: 0x0;
+    REGISTER_H2D :: 0x27;
+    REGISTER_D2H :: 0x34;
+    DMA_ACTIVATE :: 0x39;
+    DMA_SETUP    :: 0x41;
+    DATA         :: 0x46;
+    BIST         :: 0x58;
+    PIO_SETUP    :: 0x5f;
+    DEV_BITS     :: 0xa1;
+}
+
+Ahci_Received_Fis :: struct {
+    dma_setup: struct {
+
+        fis: [0x20] u8;
+    };
+
+    pio_setup: struct {
+
+        fis: [0x20] u8;
+    };
+
+    d2h_register: Ahci_Command_Fis = .{
+        fis_type = .REGISTER_D2H,
+    };
+
+    device_bits: u64;
+    unknown: struct {
+        fis: [64] u8;
+    };
+
+    reserved: [0x60] u8;
+}
+
+Ahci_Signature :: enum u32 {
+    ATA   :: 0x0000_0101;
+    ATAPI :: 0xeb14_0101;
+    SEMB  :: 0xc33c_0101;
+    PM    :: 0x9669_0101;
+}
+
+Ahci_Memory_Region :: struct {
+    host_capabilities:     Ahci_Capabilities;
+    global_host_control:   u32;
+    interrupt_status:      u32;
+    ports_implemented:     u32;
+    version:               u32;
+    ccc_control:           u32;
+    ccc_ports:             u32;
+    enclosure_mgmt_loc:    u32;
+    enclosure_mgmt_ctl:    u32;
+    ext_host_capabilities: u32;
+    bios_handoff_ctl_stat: u32;
+
+    reserved: [0xa0 - 0x2c] u8;
+    vendor_specific: [0x100 - 0xa0] u8;
+
+    /* #no_abc */ ports: [32] Port;
+
+    Port :: struct {
+        command_list_base: u64 #align 4;
+        fis_base: u64 #align 4;
+        interrupt_status: u32;
+        interrupt_enable: u32;
+        command_status: Ahci_Port_Command_Status;
+        reserved: u32;
+        task_file_data: u32;
+        signature: Ahci_Signature; /* struct {
+            // Why does the spec say the signature has this structure?
+            sector_count: u8;
+            lba_low: u8;
+            lba_mid: u8;
+            lba_high: u8;
+        }; */
+
+        sata_status: u32;
+        sata_control: u32;
+        sata_error: u32;
+        sata_active: u32;
+        command_issue: u32;
+        sata_notif: u32;
+        fis_based_switching_control: u32;
+        device_sleep: u32;
+
+        reserved_2: [0x70 - 0x48] u8;
+        vendor_specific: [16] u8;
+    }
+}
+
+#assert(size_of(Ahci_Command_Header) == 0x20);
+#assert(size_of(Ahci_Command_Table) == 0x80);
+#assert(size_of(Ahci_Memory_Region.Port) == 0x80);
+#assert(size_of(Ahci_Received_Fis) == 0x100);
+#assert(Ahci_Port_Command_Status.INTERFACE_COMMUNICATION_CONTROL_BIT3 == 0x8000_0000);
+
+Ahci_Capabilities :: enum_flags u32 {
+    PORT_COUNT_BIT0;
+    PORT_COUNT_BIT1;
+    PORT_COUNT_BIT2;
+    PORT_COUNT_BIT3;
+    PORT_COUNT_BIT4;
+    EXTERNAL_SATA;
+    ENCLOSURE_MGMT;
+    CCC;
+    COMMAND_SLOT_COUNT_BIT0;
+    COMMAND_SLOT_COUNT_BIT1;
+    COMMAND_SLOT_COUNT_BIT2;
+    COMMAND_SLOT_COUNT_BIT3;
+    COMMAND_SLOT_COUNT_BIT4;
+    PARTIAL_STATE;
+    SLUMBER_STATE;
+    PIO_MULTIPLE_DRQ;
+    FIS_BASED_SWITCHING;
+    PORT_MULTIPLIER;
+    SUPPORTS_AHCI_ONLY;
+    RESERVED;
+    INTERFACE_SPEED_BIT0;
+    INTERFACE_SPEED_BIT1;
+    INTERFACE_SPEED_BIT2;
+    INTERFACE_SPEED_BIT3;
+    COMMAND_LIST_OVERRIDE;
+    ACTIVITY_LED;
+    AGGRESSIVE_LINK_POWER_MGMT;
+    STAGGERED_SPIN_UP;
+    MECHANICAL_PRESENCE_SWITCH;
+    S_NOTIFICATION_REGISTER;
+    NATIVE_COMMAND_QUEUEUUEUEING;
+    _64BIT_ADDRESSING;
+}
+
+Ahci_Port_Command_Status :: enum_flags u32 {
+    START;
+    SPIN_UP;
+    POWER_ON;
+    COMMAND_LIST_OVERRIDE;
+    FIS_RECEIVE_ENABLE;
+    RESERVED_BIT0;
+    RESERVED_BIT1;
+    RESERVED_BIT2;
+    CURRENT_COMMAND_SLOT_BIT0;
+    CURRENT_COMMAND_SLOT_BIT1;
+    CURRENT_COMMAND_SLOT_BIT2;
+    CURRENT_COMMAND_SLOT_BIT3;
+    CURRENT_COMMAND_SLOT_BIT4;
+    MECHANICAL_PRESENCE_SWITCH_STATE;
+    FIS_RECEIVE_RUNNING;
+    COMMAND_LIST_RUNNING;
+    COLD_PRESENCE_STATE;
+    PORT_MULTIPLIER_ATTACHED;
+    HOT_PLUG_CAPABLE_PORT;
+    MECHANICAL_PRESENSE_SWITCH_ATTACHED_TO_PORT;
+    COLD_PRESENCE_DETECTION;
+    EXTERNAL_SATA_PORT;
+    FIS_BASED_SWITCHING_CAPABLE;
+    AUTOMATIC_PARTIAL_TO_SLUMBER_TRANSITIONS_ENABLED;
+    DEVICE_IS_ATAPI;
+    DRIVE_LED_ON_ATAPI_ENABLE;
+    AGGRESSIVE_LINK_POWER_MANAGEMENT_ENABLE;
+    AGGRESSIVE_SLUMBER_AND_PARTIAL;
+    INTERFACE_COMMUNICATION_CONTROL_BIT0;
+    INTERFACE_COMMUNICATION_CONTROL_BIT1;
+    INTERFACE_COMMUNICATION_CONTROL_BIT2;
+    INTERFACE_COMMUNICATION_CONTROL_BIT3;
+}
+
 
 
 Hda :: struct {

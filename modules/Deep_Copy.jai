@@ -252,7 +252,7 @@ get_array_stride :: (size: s64) -> s64 {
 
 
 find :: (map: *Pointer_Map, old: *void) -> *void {
-    value, found := table_find(map.table, old);
+    value, found := table_find(*map.table, old);
     if !found return null;
     return value;
 }

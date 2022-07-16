@@ -226,6 +226,7 @@ init_graphics :: (boot_data: Boot_Data) {
 }
 
 paint_screen :: () {
+    if !graphics.initialized return;
     g := *graphics;
 
     execute_draw_list(g.draw_list, g.screen);

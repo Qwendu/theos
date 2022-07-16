@@ -91,7 +91,7 @@
         }
     }
 
-    print_hex :: (number: $T, color: Color = .{ vga = 0}, decorate := true) #c_call {
+    print_hex :: (number: $T, color: Color = .{ vga = 1}, decorate := true) #c_call {
         if !USE_VGA return;
         #assert type_info(T).type == .INTEGER;
         size := #run type_info(T).runtime_size;
@@ -105,7 +105,7 @@
 
             cur := (text_cursor + indent + size * 2 - it - 1) * 2;
             vga_screen[cur] = table[index];
-            vga_screen[cur + 1] = get_attribute();
+            vga_screen[cur + 1] = 0x0f;
         }
         text_cursor += size * 2;
     }

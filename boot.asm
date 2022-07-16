@@ -299,8 +299,8 @@ load_kernel_dbs:
     ; === Copy to high memory ===
     push cx
     mov ecx, sectors_per_load * sector_size
-    mov edi, ebx
     mov esi, kernel_load_buffer
+    mov edi, ebx
     add edi, 0x500_000
 
     a32 rep movsb

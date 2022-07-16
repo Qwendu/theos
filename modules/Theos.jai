@@ -123,9 +123,9 @@ read_file :: (name: string) -> [] u8 {
     result: [] u8;
     target := *result;
     #asm {
-        mov rbx: gpr === b, data;
-        mov rcx: gpr === c, count;
         mov rdx: gpr === d, target;
+        mov rcx: gpr === c, count;
+        mov rbx: gpr === b, data;
         mov rax: gpr === a, READ_FILE;
 
         int 0x80;
@@ -168,9 +168,9 @@ list_directory :: (name: string) -> [] Directory_Entry_Info {
 
     _name := *name;
     #asm {
+        rcx: gpr === c;
         mov rbx: gpr === b, _name;
         mov rax: gpr === a, LIST_DIRECTORY;
-        rcx: gpr === c;
 
         int 0x80;
         mov [result_count], rcx;
@@ -460,29 +460,33 @@ Mouse_Event :: enum {
 #scope_module
 
 crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
-    for 0..count-1 {
-        target[it] = cast(u8) value;
+    #asm {
+        cld;
+
+        count  === c;
+        target === di;
+        value  === a;
+        rep_stos.b target, value, count;
     }
+
     return target;
 }
 
-crt_memcpy :: (dst: *void, src: *void, $$ count: u64) -> *void #c_call {
+crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     #asm {
-        rsi: gpr === si;
-        rdi: gpr === di;
-        rcx: gpr === c;
-        mov rsi, src;
-        mov rdi, dst;
-        mov rcx, count;
+        cld;
+
+        src   === si;
+        dst   === di;
+        count === c;
+        rep_movs.b dst, src, count;
     }
-    // rep movsb
-    #bytes .[0xf3, 0xa4];
 
     return dst;
 }
 
 crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
-    for 0..count-1 {
+    for 0..(cast(s64) count)-1 {
         if a[it] != b[it] {
             return a[it] - b[it];
         }

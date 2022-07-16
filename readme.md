@@ -10,6 +10,6 @@ By default, the build program outputs a raw floppy bootable disk image. To run o
 
 Qemu might be easier to get started with than VirtualBox. I use the Qemu command "qemu-system-x86_64.exe theos -cpu qemu64,+popcnt,+bmi1,+fsgsbase". The extra flags are required to run the chess game.
 
-#### Current Jai version: 0.1.022
+#### Current Jai version: 0.1.032
 
 ![](screenshot.png)
