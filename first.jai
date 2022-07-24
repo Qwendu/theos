@@ -7,7 +7,7 @@
 #load "themes.jai";
 #load "build_theos_app.jai";
 
-interrupts: [] struct {
+exceptions: [] struct {
     message: string;
     slot: int;
     has_error_code: bool;
@@ -35,7 +35,7 @@ interrupts: [] struct {
     .{ "Security exception fault",         0x1e, true  },
 ];
 
-irqs: [] struct {
+interrupt_handlers: [] struct {
     handler: string;
     slot: int;
 } = .[
@@ -45,6 +45,7 @@ irqs: [] struct {
     .{ "ps2_mouse"    ,  0x2c },
     .{ "ata_interrupt",  0x2e },
     .{ "syscall_interrupt", 0x80 },
+    .{ "page_fault_handler", 0x0e },
 ];
 
 
@@ -116,7 +117,7 @@ irqs: [] struct {
     {
         builder: String_Builder;
         append(*builder, IRQ_PREAMBLE);
-        for irqs {
+        for interrupt_handlers {
             print_to_builder(*builder, "extern %\n", it.handler);
             print_to_builder(*builder, "global %_wrapper\n", it.handler);
             print_to_builder(*builder, "align 0x8\n%_wrapper:\n", it.handler);
@@ -160,6 +161,7 @@ irqs: [] struct {
         options.cast\_bounds_check = .OFF;
         options.math\_bounds_check = .OFF;
         options.null_pointer_check = .OFF;
+        options.enable_bytecode_inliner = false;
         options.dead_code_elimination = .MODULES_ONLY;
 
         options.backend = .LLVM;
@@ -177,21 +179,21 @@ irqs: [] struct {
 
         {
             isr_code: String_Builder;
-            for interrupts {
+            for exceptions {
                 append(*isr_code, tprint(ISR_DECLARATION, formatInt(it.slot, base=16), it.has_error_code, it.message));
                 append(*isr_code, "\n");
             }
-            for irqs {
+            for interrupt_handlers {
                 format := "%_wrapper :: () #c_call #foreign Interrupts;\n";
                 insert := tprint(format, it.handler);
                 append(*isr_code, insert);
             }
 
             append(*isr_code, "register_generated_isrs :: () {\n");
-            for interrupts {
+            for exceptions {
                 append(*isr_code, tprint("    idt_add_handler(xx isr_slot_0x%, 0x%1);\n", formatInt(it.slot, base=16)));
             }
-            for irqs {
+            for interrupt_handlers {
                 append(*isr_code, tprint("    idt_add_handler(xx %_wrapper, 0x%);\n", it.handler, formatInt(it.slot, base=16)));
             }
             append(*isr_code, "}\n");
@@ -272,7 +274,6 @@ irqs: [] struct {
                 append(*generated_asm, tprint("    dq 0x%\t\t; Bytes to zero clear\n",  header.p_memsz));
                 append(*generated_asm, tprint("    dq 0x%\t\t; Bytes to copy\n",        header.p_filesz));
 
-                print("it: %, vaddr: %, filesz: %, memsz: %\n", it, header.p_vaddr, header.p_filesz, header.p_memsz);
                 assert(header.p_vaddr + max(header.p_filesz, header.p_memsz) < 0xffff_ffff_8030_0000);
                 append(*kernel_binary, elf.data + header.p_offset, xx header.p_filesz);
                 kernel_offset += xx header.p_filesz;

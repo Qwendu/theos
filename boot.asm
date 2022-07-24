@@ -190,14 +190,14 @@ start:
   .space: db ' ', 0
 
 unreal_gdt:
-   dw .end - .start - 1
-   dd .start
+    dw .end - .start - 1
+    dd .start
 
-.start:
-   dq 0
-   db 0xff, 0xff, 0, 0, 0, 10010010b, 11001111b, 0
-   db 0xff, 0xff, 0, 0, 0, 10010010b, 11001111b, 0
-.end:
+  .start:
+    dq 0
+    db 0xff, 0xff, 0, 0, 0, 10010010b, 11001111b, 0
+    db 0xff, 0xff, 0, 0, 0, 10010010b, 11001111b, 0
+  .end:
 
 times 0x1fe-($-$$) db 0
 dw 0xaa55
@@ -262,7 +262,7 @@ write_hex:
   .prefix: db '0x', 0
 
 sector_size equ 0x200
-sectors_per_load equ 0x10;
+sectors_per_load equ 0x1;
 
 [bits 16]
 disk_address_packet:

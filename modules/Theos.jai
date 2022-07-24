@@ -117,15 +117,13 @@ set_theme :: (theme: Theme) {
 read_file :: (name: string) -> [] u8 {
     using Syscall_Numbers;
 
-    count := name.count;
-    data := name.data;
+    p_name := *name;
 
     result: [] u8;
     target := *result;
     #asm {
-        mov rdx: gpr === d, target;
-        mov rcx: gpr === c, count;
-        mov rbx: gpr === b, data;
+        mov rbx: gpr === d, target;
+        mov rcx: gpr === c, p_name;
         mov rax: gpr === a, READ_FILE;
 
         int 0x80;
@@ -139,8 +137,8 @@ write_file :: (name: string, data: [] u8) {
     _data := *data;
     _name := *name;
     #asm {
-        mov rbx: gpr === b, _name;
-        mov rcx: gpr === c, _data;
+        mov rbx: gpr === b, _data;
+        mov rcx: gpr === c, _name;
         mov rax: gpr === a, WRITE_FILE;
 
         int 0x80;
@@ -163,18 +161,15 @@ list_directory :: (name: string) -> [] Directory_Entry_Info {
     using Syscall_Numbers;
 
     result: [] Directory_Entry_Info;
-    result_count := *result.count;
-    result_data := *result.data;
-
     _name := *name;
+    _result := *result;
+
     #asm {
-        rcx: gpr === c;
         mov rbx: gpr === b, _name;
+        mov rcx: gpr === c, _result;
         mov rax: gpr === a, LIST_DIRECTORY;
 
         int 0x80;
-        mov [result_count], rcx;
-        mov [result_data],  rbx;
     }
 
     return result;

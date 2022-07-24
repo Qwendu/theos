@@ -77,8 +77,6 @@ Boot_Data :: struct {
 boot_data: Boot_Data;
 boot_drive: *Mass_Storage_Device;
 
-global_kernel_context: *Context;
-
 #program_export
 kernel_entry :: () {
     kernel_context: Context;
@@ -89,7 +87,6 @@ kernel_entry :: () {
     push_context kernel_context {
         boot_data = << cast(*Boot_Data) BOOT_DATA_AREA;
 
-        global_kernel_context = *context;
         idt_init();
         gdt_init();
         pic_init();
@@ -100,11 +97,13 @@ kernel_entry :: () {
         page_table_init();
         enable_ps2();
         cmos_enable_irq(true);
-        cmos_set_rate(15);
+        // cmos_set_rate(15);
         enable_simd(cpu);
 
         acpi_init();
         hpet_init();
+
+        initialize_task_manager();
 
         pci_scan_all_devices();
         discover_mass_storage_devices();
@@ -141,8 +140,6 @@ kernel_entry :: () {
         ct := cmos_get_calendar_time();
         boot_time = theos_calendar_to_apollo(ct);
 
-        initialize_task_manager();
-
         #if !ENABLE_VESA {
             print("This is where we start entering the shell.\n");
             print("However, we're in VGA debugging mode from where we can't draw anything, so we're going to halt.\n");
@@ -152,14 +149,15 @@ kernel_entry :: () {
         init_graphics(*boot_data);
         init_shell(font);
 
-        make_task(work, *"Task 1");
-        yield();
+        // create_file("system/demo_counter");
+        // write_file("system/demo_counter", .[0]);
 
         startup := read_file("system/startup.shell");
         commands := String.split(cast(string) startup, "\n");
         for commands shell_run_command(it);
 
         paint_screen();
+        printf("Usable (non-ACPI) physical memory: %Mb\n", total_memory / 0x100_000);
 
         while true {
             #asm {
@@ -233,8 +231,8 @@ assertion_failed :: (location: Source_Code_Location, message: string) {
         print(message);
     }
     print("\n\n");
-
     paint_screen();
+
     print_stack_trace();
     paint_screen();
 
@@ -539,7 +537,6 @@ idt_init :: () {
     idt_desc.base = xx idt.data;
 
     register_generated_isrs();
-    idt_add_handler(xx page_fault_handler, 0x0e);
 
     address := *idt_desc;
     #asm {
@@ -1084,7 +1081,6 @@ read :: (reg: Hpet_Register) -> u64 {
 }
 
 hpet: struct {
-    acpi_table: Hpet_Acpi_Table;
     base_period: u64; // Femtoseconds
     base_address: *void;
 }
@@ -1093,11 +1089,11 @@ hpet_init :: () {
     hpet_acpi_header := acpi_get_table_by_signature("HPET");
     assert(hpet_acpi_header != null, "HPET is not available");
 
-    hpet.acpi_table = cast(*Hpet_Acpi_Table) hpet_acpi_header;
-    assert(hpet.acpi_table.address_space == .MAIN_MEMORY);
+    acpi_table := cast(*Hpet_Acpi_Table) hpet_acpi_header;
+    assert(acpi_table.address_space == .MAIN_MEMORY);
 
-    virt := map_memory(0x1000, physical_address = hpet.acpi_table.base_address);
-    offset_in_page := hpet.acpi_table.base_address % 0x1000;
+    virt := map_memory(0x1000, physical_address = acpi_table.base_address);
+    offset_in_page := acpi_table.base_address % 0x1000;
     hpet.base_address = xx (virt + offset_in_page);
 
     capabilities := read(Hpet_Register.CAPABILITIES);
@@ -1354,23 +1350,9 @@ get_physical_address :: (virtual_address: *void, address_space := *kernel_addres
     return (pte & ~0xfff) + page_offset, true;
 }
 
-page_fault_handler :: () #no_call {
-    #asm {
-        rsp: gpr === sp;
-        sub rsp, 0x200;
-        cli;
-    }
-
-    error_code: *u64;
-    stack_data: *Interrupt_Stack_Frame;
-
-    #asm {
-        mov stack:, rsp;
-        add stack, 0x200;
-        mov error_code, stack;
-        add stack, 0x8;
-        mov stack_data, stack;
-    }
+#program_export
+page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
+    stack_data = xx (cast(*u8) stack_data + 8);
 
     push_context Context.{} {
         print("An exception has occurred:  ");
@@ -1394,17 +1376,16 @@ page_fault_handler :: () #no_call {
         // print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
         print("\nInterrupt frame:\n");
         print("RIP:    "); print_hex(stack_data.ip);    print("\n");
-        // print("CS:     "); print_hex(stack_data.cs);    print("\n");
+        print("CS:     "); print_hex(stack_data.cs);    print("\n");
         print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
         print("SP:     "); print_hex(stack_data.sp);    print("\n");
-        // print("SS:     "); print_hex(stack_data.ss);    print("\n");
+        print("SS:     "); print_hex(stack_data.ss);    print("\n");
 
         paint_screen();
-#asm { hlt; }
 
         #if PAGE_FAULT_STACK_TRACE {
             print("\nStack trace:\n");
-            node := global_kernel_context.stack_trace;
+            node := current_task.the_context.stack_trace;
             while node {
                 if node.info != null {
                     print("In file \"");
@@ -1420,10 +1401,6 @@ page_fault_handler :: () #no_call {
             }
             paint_screen();
         }
-    }
-
-    #asm {
-        add rsp, 0x200;
     }
 
     while true #asm { hlt; }
@@ -1465,16 +1442,24 @@ init_physical_allocator :: () {
     lowest_free_bit = 0xa00_000 / 0x1000;
     memory_map := get_memory_map();
 
+    // Todo: handle overlapping regions
     for memory_map {
+        total_memory += xx it.limit;
+
         if  it.type == .NONE continue;
         if  it.base < 0x100_000 continue;
         if (it.base % 0x1000 != 0) || (it.limit % 0x1000 != 0) continue;
 
         if  it.type != .AVAILABLE {
             reserve_physical_region(it.base, it.limit);
+        } else {
+            available_memory += xx it.limit;
         }
     }
 }
+
+available_memory: int;
+total_memory: int;
 
 lowest_free_bit: u64;
 last_gotted_page_frame: u64;
@@ -1617,26 +1602,35 @@ load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
         }
     }
 
+    // Once task management works:
+    // make_task(start_process, elf_base);
+    // yield();
+
+    start_process(elf_base);
+    return true;
+}
+
+start_process :: (elf: *void) {
+    elf_header := cast(*Elf64_Ehdr) elf;
+
     tls := map_memory(0x4000);
     #asm FSGSBASE {
         wrfsbase tls;
-    }
-
-    entry_point := << cast(*() #no_context) *elf.e_entry;
-    entry_point();
+    } 
 
     unmap_memory(0x4000, xx tls);
 
-    for 0..elf.e_phnum - 1 {
-        base := elf_base  + elf.e_phoff;
-        base += it        * elf.e_phentsize;
+    entry_point := << cast(*() #no_context) *elf_header.e_entry;
+    entry_point();
+
+    for 0..elf_header.e_phnum - 1 {
+        base := elf + elf_header.e_phoff;
+        base += it  * elf_header.e_phentsize;
         header := cast(*Elf64_Phdr) base;
 
         if header.p_type != PT_LOAD  continue;
         unmap_memory(xx header.p_memsz, header.p_vaddr);
     }
-
-    return true;
 }
 
 Syscall_Numbers :: enum {
@@ -1670,9 +1664,9 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
     syscall_context.assertion_failed = assertion_failed;
 
     push_context syscall_context {
-        old := global_kernel_context;
-        global_kernel_context = *context;
-        defer global_kernel_context = old;
+        old := current_task.the_context;
+        current_task.the_context = *context;
+        defer current_task.the_context = old;
 
         if data.rax == xx WRITE_STRING {
             text: string;
@@ -1834,9 +1828,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         }
 
         else if data.rax == xx READ_FILE {
-            name: string;
-            name.data = xx data.rbx;
-            name.count = xx data.rcx;
+            name := << cast(*string) data.rcx;
 
             file := read_file(name);
             target := cast(*[] u8) data.rdx;
@@ -1846,6 +1838,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         else if data.rax == xx WRITE_FILE {
             name:      string = << cast(*string) data.rbx;
             file_data: [] u8  = << cast(*[] u8)  data.rcx;
+
             write_file(name, file_data);
         }
 
@@ -1855,10 +1848,8 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         }
 
         else if data.rax == xx LIST_DIRECTORY {
-            name: string = << cast(*string) data.rbx;
-            result := list_directory(name);
-            data.rbx = xx result.data;
-            data.rcx = xx result.count;
+            name := << cast(*string) data.rbx;
+            << cast(*[] Directory_Entry_Info) data.rcx = list_directory(name);
         }
 
         else if data.rax == xx GET_THEME {
@@ -1932,4 +1923,9 @@ dont :: () #expand {
         cli;
         hlt;
     }
+}
+
+HexMode :: () #expand {
+    context.print_style.default_format_int.base = 16;
+    `defer context.print_style.default_format_int.base = 10; //`
 }

@@ -847,22 +847,28 @@ print_pipe :: () {
     }
 
     else if value.type.type == .STRUCT {
-        tis := cast(*Type_Info_Struct) value.type;
-        if tis.name == "Rich_Text" {
-            rich := cast(*Rich_Text) value.value_pointer;
+        new := context;
+        new.print_style.default_format_struct.use_long_form_if_more_than_this_many_members = 0;
+        new.print_style.default_format_struct.use_newlines_if_long_form = true;
 
-            for * rich.attributes {
-                it.start_position += shell.text.used;
+        push_context new {
+            tis := cast(*Type_Info_Struct) value.type;
+            if tis.name == "Rich_Text" {
+                rich := cast(*Rich_Text) value.value_pointer;
+
+                for * rich.attributes {
+                    it.start_position += shell.text.used;
+                }
+
+                dest := shell.text.attr_buffer + shell.text.attr_count;
+                memcpy(dest, rich.attributes.data, rich.attributes.count * size_of(Rich_Text.Attribute));
+
+                shell.text.attr_count += rich.attributes.count;
+                write_to_text_viewer(*shell.text, rich.text);
+                
+            } else {
+                printf("%\n", value);
             }
-
-            dest := shell.text.attr_buffer + shell.text.attr_count;
-            memcpy(dest, rich.attributes.data, rich.attributes.count * size_of(Rich_Text.Attribute));
-
-            shell.text.attr_count += rich.attributes.count;
-            write_to_text_viewer(*shell.text, rich.text);
-            
-        } else {
-            printf("%\n", value);
         }
     }
 

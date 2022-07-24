@@ -1,6 +1,9 @@
 
 ### Features
- - Has a chess game on it, that has a higher elo rating than the 3-D chess game on macOS
+ - Play against a strong chess AI, written in Jai by DanielTan (thanks for letting me use it)
+ - Custom file system which uses Apollo Time for created/modified time stamps
+ - Custom executable format that supports typechecked parameters for programs using Jai type reflection (Type_Info)
+ - Structured shell, programs communicate using typed / structured data, also using Type_Info
 
 ### Get it running
 

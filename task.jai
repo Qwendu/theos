@@ -4,6 +4,7 @@ Task_Info :: struct {
     next: *Task_Info;
     startup_data: *void;
     entry: (data: *void);
+    the_context: *Context;
 }
 
 current_task: *Task_Info;
@@ -14,6 +15,7 @@ initialize_task_manager :: () {
     task_switch :: () #c_call #foreign Interrupts;
     idt_add_handler(xx task_switch, 0x40);
     task.next = task;
+    task.the_context = *context;
     current_task = task;
 }
 
@@ -33,6 +35,7 @@ new_task_start :: () #no_context {
     kernel_context.assertion_failed = assertion_failed;
 
     push_context kernel_context {
+        current_task.the_context = *context;
         current_task.entry(current_task.startup_data);
         exit();
     }

@@ -102,7 +102,7 @@ scan_bus :: (bus: u32) {
 
         AddDevice(0);
 
-        if (header.header_type & PCI_HEADER_TYPE_MULTIFUNCTION_BIT) {
+        if header.header_type & PCI_HEADER_TYPE_MULTIFUNCTION_BIT {
             for function: 1..PCI_NUM_FUNCTIONS - 1 {
                 header := pci_read_header(xx bus, xx device, xx function);
                 if header.vendor_id == PCI_VENDOR_NO_DEVICE continue;
@@ -488,9 +488,9 @@ ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Tr
 
     if direction == .READ {
         ide_write(dev, COMMAND, Ide_Command.READ_DMA);
-    } else {
+    } else if direction == .WRITE {
         ide_write(dev, COMMAND, Ide_Command.WRITE_DMA);
-    }
+    } else assert(false);
 
     start := get_system_time();
     while true {

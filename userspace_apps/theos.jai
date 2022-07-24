@@ -142,7 +142,7 @@ theos_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
 }
 
 leap_years_before :: (year: s64) -> s64 {
-    floor_div :: (dividend: int, $ divisor: int) -> int {
+    floor_div :: (dividend: int, divisor: int) -> int {
         offset := cast(int) (dividend <= 0 && dividend % divisor);
         return dividend / divisor - offset;
     }

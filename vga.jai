@@ -68,7 +68,7 @@
     print :: (number: int, color: Color = .{ vga = 255}) #c_call {
         if !USE_VGA return;
         c := color;
-        if c.vga == 255 c.vga = theme.foreground;
+        if c.vga == 255 c.vga = theme.foreground.vga;
 
         negative: bool;
         buffer: [30] u8 = ---;
