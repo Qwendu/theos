@@ -1,4 +1,6 @@
 
+// This is the theos system API. Kind of like #include "windows.h", but even leaner and meaner
+
 #scope_export
 
 Syscall_Numbers :: enum {
@@ -21,6 +23,27 @@ Syscall_Numbers :: enum {
     READ_STRING      :: 0x10;
     LIST_DIRECTORY   :: 0x11;
     GET_TIME         :: 0x12;
+    GET_SYSTEM_PARAMETERS  :: 0x13;
+}
+
+System_Params :: struct {
+    x_resolution: int;
+    y_resolution: int;
+
+    physical_memory: int;
+    used_physical_memory: int;
+    // Add more stuff if it comes up, so that we don't need a million syscalls for stuff
+}
+
+get_system_parameters :: (params: *System_Params) {
+    using Syscall_Numbers;
+
+    #asm {
+        mov rbx: gpr === b, params;
+        mov rax: gpr === a, GET_SYSTEM_PARAMETERS;
+
+        int 0x80;
+    }
 }
 
 theos_get_time :: () -> Apollo {
@@ -488,3 +511,4 @@ crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
     }
     return 0;
 }
+

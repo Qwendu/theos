@@ -3,8 +3,8 @@ Basic  :: #import "Basic";
 String :: #import "String";
 
 #import "Machine_X64";
-#import,file "modules/Elf.jai";
-#import,file "modules/Theos_Filesystem.jai";
+#import "Elf";
+#import "Theos_Filesystem";
 
 #load "pci.jai";
 #load "graphics.jai";
@@ -98,6 +98,7 @@ kernel_entry :: () {
         enable_ps2();
         cmos_enable_irq(true);
         // cmos_set_rate(15);
+
         enable_simd(cpu);
 
         acpi_init();
@@ -124,7 +125,7 @@ kernel_entry :: () {
         // read_extent = (block_index: int, block_count: int, data: *void, user_data: *void) {
         //     buffer := map_memory(block_count * FS_BLOCKSIZE, physically_contiguous = true);
         //     location := FS_BASE_ADDRESS + block_index * FS_BLOCKSIZE;
-        //     ide_bus_master_transfer(.READ, buffer, xx (block_count * FS_BLOCKSIZE), xx location);
+        //     read_mass_storage(boot_drive, buffer, xx (block_count * FS_BLOCKSIZE), xx location);
         //     memcpy(data, buffer, block_count * FS_BLOCKSIZE);
         // };
 
@@ -149,15 +150,12 @@ kernel_entry :: () {
         init_graphics(*boot_data);
         init_shell(font);
 
-        // create_file("system/demo_counter");
-        // write_file("system/demo_counter", .[0]);
-
-        startup := read_file("system/startup.shell");
+        startup := read_file("system/startup");
         commands := String.split(cast(string) startup, "\n");
         for commands shell_run_command(it);
+        // printf("Usable (non-ACPI) physical memory: %Mb\n", total_memory / 0x100_000);
 
         paint_screen();
-        printf("Usable (non-ACPI) physical memory: %Mb\n", total_memory / 0x100_000);
 
         while true {
             #asm {
@@ -383,13 +381,13 @@ enable_simd :: (cpu: Cpu_X86) {
 //        set_cr4 cr4;
 //    }
 //
-    if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
-        index: gpr === c;
-
-        xgetbv xcr0_h:, xcr0_l:, index;
-        or xcr0_l, 7;
-        xsetbv xcr0_h, xcr0_l, index;
-    }
+//    if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
+//        index: gpr === c;
+//
+//        xgetbv xcr0_h:, xcr0_l:, index;
+//        or xcr0_l, 7;
+//        xsetbv xcr0_h, xcr0_l, index;
+//    }
 }
 
 BochsBreak :: () #expand {
@@ -445,12 +443,32 @@ make_gdt_entry :: (base: u64, limit: u32, flags: u64) -> u64 {
     return entry;
 }
 
+#if ENABLE_IST {
+    Task_State_Segment :: struct {
+        reserved_0: u32;
+        rsp:        [3] u64 #align 4;
+        reserved_1: [2] u32;
+        ist:        [7] u64 #align 4;
+        reserved_2: [2] u32;
+        reserved_3: u16;
+        iobp:       u16;
+    }
+    #assert(size_of(Task_State_Segment) == 0x68);
+
+    tss: Task_State_Segment #align 0x80;
+}
+
 gdt_init :: () {
     using Gdt_Entry_Flags;
 
     gdt[0] = 0x0;
     gdt[1] = xx (READ_WRITE | PRESENT | DESCRIPTOR_TYPE | LONG_MODE_CODE | EXECUTABLE);
     gdt[2] = xx (READ_WRITE | PRESENT | DESCRIPTOR_TYPE);
+
+    #if ENABLE_IST {
+        gdt[3] = xx make_gdt_entry(xx *tss, size_of(Task_State_Segment), xx SIZE | xx (0x89 << 40));
+        gdt[4] = 0xffff_ffff;
+    }
 
     gdtr: struct {
         limit: u16;
@@ -462,11 +480,27 @@ gdt_init :: () {
 
     gdtrp := *gdtr;
 
+    #if ENABLE_IST {
+        tss.ist[0] = KERNEL_BASE + 0x400_000;
+        tss.ist[1] = KERNEL_BASE + 0x400_000 - 0x1000;
+        tss.ist[2] = KERNEL_BASE + 0x400_000 - 0x2000;
+        tss.ist[3] = KERNEL_BASE + 0x400_000 - 0x3000;
+        tss.ist[4] = KERNEL_BASE + 0x400_000 - 0x4000;
+        tss.ist[5] = KERNEL_BASE + 0x400_000 - 0x5000;
+        tss.ist[6] = KERNEL_BASE + 0x400_000 - 0x6000;
+
+        tss.iobp = size_of(Task_State_Segment);
+    }
+
     #asm {
         lgdt [gdtrp];
+        mov.w rax: gpr === a, 0x18;
+    }
+
+    #if ENABLE_IST {
+        #bytes .[ 0x0f, 0x00, 0xd8 ]; // ltr ax
     }
 }
-
 
 
 
@@ -485,8 +519,8 @@ Interrupt_Data :: struct {
     r12:  u64;
     r11:  u64;
     r10:  u64;
-    r9:   u64;
-    r8:   u64;
+    r9 :  u64;
+    r8 :  u64;
     rbp:  u64;
     rdi:  u64;
     rsi:  u64;
@@ -525,7 +559,7 @@ idt_add_handler :: (address: *void, index: int) {
     entry.offset_2  = xx (_address >> 16) & 0xffff;
     entry.offset_3  = xx (_address >> 32) & 0xffffffff;
     entry.selector  = 0b00001000;
-    entry.ist       = 0x0;
+    entry.ist       = xx ifx ENABLE_IST 0x1 else 0x0;
     entry.flags     = 0x8e;
     entry.reserved  = 0x0;
 
@@ -537,6 +571,14 @@ idt_init :: () {
     idt_desc.base = xx idt.data;
 
     register_generated_isrs();
+
+    #if ENABLE_IST {
+        idt[0x21].ist = 0x2;
+        idt[0x28].ist = 0x3;
+        idt[0x2c].ist = 0x4;
+        idt[0x2e].ist = 0x5;
+        idt[0x80].ist = 0x6;
+    }
 
     address := *idt_desc;
     #asm {
@@ -615,19 +657,19 @@ pic_enable_irq :: (irq: Pic_Request_Line) {
 }
 
 Pic_Request_Line :: enum {
-    PROGRAMMABLE_INTERRUPT_TIMER :: 0x0;
-    PS2_KEYBOARD                 :: 0x1;
-    CASCADE                      :: 0x2;
-    COM2                         :: 0x3;
-    COM1                         :: 0x4;
-    LPT2                         :: 0x5;
-    FLOPPY_DISK                  :: 0x6;
-    SPURIOUS                     :: 0x7;
-    CMOS_RTC                     :: 0x8;
-    PS2_MOUSE                    :: 0xc;
-    FPU                          :: 0xd;
-    PRIMARY_ATA                  :: 0xe;
-    SECONDARY_ATA                :: 0xf;
+    PIT             :: 0x0;
+    PS2_KEYBOARD    :: 0x1;
+    CASCADE         :: 0x2;
+    COM2            :: 0x3;
+    COM1            :: 0x4;
+    LPT2            :: 0x5;
+    FLOPPY_DISK     :: 0x6;
+    SPURIOUS        :: 0x7;
+    CMOS_RTC        :: 0x8;
+    PS2_MOUSE       :: 0xc;
+    FPU             :: 0xd;
+    PRIMARY_ATA     :: 0xe;
+    SECONDARY_ATA   :: 0xf;
 }
 
 #program_export
@@ -902,24 +944,26 @@ timer_ticks_target: u64;
 
 CMOS_BASE_FREQ :: 32768;
 
-time_difference :: (ticks_a: u64, ticks_b: u64) -> float {
-    frequency := (CMOS_BASE_FREQ >> (cmos_format.rate - 1));
-    return cast(float) (ticks_b - ticks_a) / cast(float) frequency;
-}
-
-wait_for_seconds :: (seconds: float) {
-    timer_ticks_target = cast(u64) (seconds * (CMOS_BASE_FREQ >> (cmos_format.rate - 1)));
-    timer_ticks_target += timer_ticks_elapsed;
-
-    while true {
-        #asm { sti; hlt; }
-        if timer_ticks_elapsed >= timer_ticks_target {
-            break;
-        }
-    }
-
-    timer_ticks_target = 0;
-}
+// Use get_system_time instead of these
+// =================================================
+// time_difference :: (ticks_a: u64, ticks_b: u64) -> float {
+//     frequency := (CMOS_BASE_FREQ >> (cmos_format.rate - 1));
+//     return cast(float) (ticks_b - ticks_a) / cast(float) frequency;
+// }
+// 
+// wait_for_seconds :: (seconds: float) {
+//     timer_ticks_target = cast(u64) (seconds * (CMOS_BASE_FREQ >> (cmos_format.rate - 1)));
+//     timer_ticks_target += timer_ticks_elapsed;
+// 
+//     while true {
+//         #asm { sti; hlt; }
+//         if timer_ticks_elapsed >= timer_ticks_target {
+//             break;
+//         }
+//     }
+// 
+//     timer_ticks_target = 0;
+// }
 
 
 
@@ -1199,6 +1243,13 @@ page_table_init :: () {
         or high, 0x1;
         wrmsr high, low, msr_name;
     }
+
+    new_bitmap_space := map_memory(total_memory / 0x1000 / 8); // One bit per physical page
+    memcpy(new_bitmap_space, bitmap_space.data, bitmap_space.count);
+    bitmap_space.data = new_bitmap_space;
+    bitmap_space.count = total_memory;
+
+    pm_bitmap.count = total_memory / 8;
 }
 
 get_or_create_page_table :: (table: *u64, entry: u64) -> *u64 {
@@ -1363,17 +1414,17 @@ page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
             get_cr2 cr2;
         }
         print("CR2 contains       "); print_hex(cr2); print(".\n");
-        // print("VESA buffer        "); print_hex(cast(u64) graphics.vesa_framebuffer); print(".\n\n");
+        print("VESA buffer        "); print_hex(cast(u64) graphics.vesa_framebuffer); print(".\n\n");
         // print("Last gotted page:  "); print_hex(last_gotted_page_frame); print(".\n");
 
         phys, present := get_physical_address(xx cr2);
-        // if present {
-        //     print("The page is present.\nIt is mapped to    "); print_hex(phys); print(".\n\n");
-        // } else {
-        //     print("The page is not present.\n\n");
-        // }
+        if present {
+            print("The page is present.\nIt is mapped to    "); print_hex(phys); print(".\n\n");
+        } else {
+            print("The page is not present.\n\n");
+        }
 
-        // print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
+//      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
         print("\nInterrupt frame:\n");
         print("RIP:    "); print_hex(stack_data.ip);    print("\n");
         print("CS:     "); print_hex(stack_data.cs);    print("\n");
@@ -1408,7 +1459,9 @@ page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
 
 
 
-bitmap_space: [ONE_GB / 0x1000 / 64] u64;
+initial_bitmap_space: [ONE_GB / 0x1000 / 64] u64;
+bitmap_space: [] u64;
+
 
 #import "Bit_Array";
 pm_bitmap: Bit_Array;
@@ -1423,13 +1476,20 @@ reserve_physical_region :: (base: u64, limit: u64) {
     start_bit := base / 0x1000;
     end_bit := (base + limit) / 0x1000;
 
-    for start_bit..end_bit {
+    print("Start bit: "); print(cast(int) start_bit); print("\n");
+    print("End   bit: "); print(cast(int) end_bit); print("\n");
+
+    for start_bit..end_bit - 1 {
+        print(cast(int) it); print(" ");
         assert(pm_bitmap[xx it] == false);
         set_bit(*pm_bitmap, xx it);
     }
 }
 
 init_physical_allocator :: () {
+    bitmap_space.data = initial_bitmap_space.data;
+    bitmap_space.count = initial_bitmap_space.count;
+
     for 0..bitmap_entries_for_limit(0xa00_000) - 1 {
         bitmap_space[it] = 0xffff_ffff_ffff_ffff;
     }
@@ -1438,7 +1498,7 @@ init_physical_allocator :: () {
         return bitmap_space.data;
     };
 
-    init_bit_array(*pm_bitmap, xx ONE_GB / 0x1000);
+    init_bit_array(*pm_bitmap, xx initial_bitmap_space.count * 64);
     lowest_free_bit = 0xa00_000 / 0x1000;
     memory_map := get_memory_map();
 
@@ -1616,12 +1676,12 @@ start_process :: (elf: *void) {
     tls := map_memory(0x4000);
     #asm FSGSBASE {
         wrfsbase tls;
-    } 
-
-    unmap_memory(0x4000, xx tls);
+    }
 
     entry_point := << cast(*() #no_context) *elf_header.e_entry;
     entry_point();
+
+    unmap_memory(0x4000, xx tls);
 
     for 0..elf_header.e_phnum - 1 {
         base := elf + elf_header.e_phoff;
@@ -1653,6 +1713,7 @@ Syscall_Numbers :: enum {
     READ_STRING      :: 0x10;
     LIST_DIRECTORY   :: 0x11;
     GET_TIME         :: 0x12;
+    GET_SYSTEM_PARAMETERS  :: 0x13;
 }
 
 #program_export
@@ -1668,7 +1729,24 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         current_task.the_context = *context;
         defer current_task.the_context = old;
 
-        if data.rax == xx WRITE_STRING {
+        if data.rax == xx GET_SYSTEM_PARAMETERS {
+            System_Params :: struct {
+                x_resolution: int;
+                y_resolution: int;
+
+                physical_memory: int;
+                used_physical_memory: int;
+                // Add more stuff if it comes up, so that we don't need a million syscalls for stuff
+            }
+
+            sys: *System_Params = xx data.rbx;
+
+            sys.x_resolution = graphics.screen.width;
+            sys.y_resolution = graphics.screen.height;
+            sys.physical_memory = total_memory; 
+       }
+
+        else if data.rax == xx WRITE_STRING {
             text: string;
             text.data = xx data.rbx;
             text.count = xx data.rcx;
@@ -1836,8 +1914,8 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         }
 
         else if data.rax == xx WRITE_FILE {
-            name:      string = << cast(*string) data.rbx;
-            file_data: [] u8  = << cast(*[] u8)  data.rcx;
+            name:      string = << cast(*string) data.rcx;
+            file_data: [] u8  = << cast(*[] u8)  data.rbx;
 
             write_file(name, file_data);
         }

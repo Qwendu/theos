@@ -735,6 +735,8 @@ print_pipe :: () {
         array := cast(*[] void) value.value_pointer;
         tia := cast(*Type_Info_Array) value.type;
 
+        if !array.count return;
+
         if tia.element_type.type == .STRUCT {
             widths := Basic.NewArray(array.count, int);
             tis := cast(*Type_Info_Struct) tia.element_type;

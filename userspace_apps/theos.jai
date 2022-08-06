@@ -1,5 +1,7 @@
 
 #import "Theos";
+#import "Theos_Utilities";
+
 #import "Basic";
 #import "Machine_X64";
 Compiler :: #import "Compiler";
@@ -78,9 +80,8 @@ TITLE :: #string END
 END;
 
 
-
-
 theos_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
+
     APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
     milliseconds := to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);
 
@@ -142,7 +143,7 @@ theos_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
 }
 
 leap_years_before :: (year: s64) -> s64 {
-    floor_div :: (dividend: int, divisor: int) -> int {
+    floor_div :: (dividend: int, $ divisor: int) -> int {
         offset := cast(int) (dividend <= 0 && dividend % divisor);
         return dividend / divisor - offset;
     }

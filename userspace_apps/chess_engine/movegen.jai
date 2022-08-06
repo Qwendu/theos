@@ -15,6 +15,155 @@ Move16 :: enum s16 {
   Queen_Promotion_Capture;
 }
 
+
+// fen string parsing with error checking.
+chess_fen :: (chess: *Chess, fen_string: string) -> bool {
+  #import "String";
+
+  memset(chess, 0, size_of(Chess));
+  tokens := split(fen_string, " ");
+  rows   := split(tokens[0], "/");
+  for tokens {
+    if !it remove it;
+  }
+  for rows {
+    if !it remove it;
+  }
+  // handle whose turn it is
+  if tokens.count < 4 || tokens.count > 6 then {
+    log(tprint("Unidentifiable fen string: %\n", tokens));
+    return false;
+  }
+  if rows.count != 8 then {
+    log(tprint("Unidentifiable board string: %\n", rows));
+    return false;
+  }
+
+  for token, i: rows {
+    sq := (7-i)*8;
+    for j: 0..token.count-1 {
+      char := token[j];
+      if char >= #char "1" && char <= #char "8" then {
+        sq += char - #char "1" + 1;
+      } else if char == #char "P" then {
+        chess.pieces[sq] = Piece.W_PAWN;
+        chess.w_pawn |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "p" then {
+        chess.pieces[sq] = Piece.B_PAWN;
+        chess.b_pawn |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "Q" then {
+        chess.pieces[sq] = Piece.W_QUEEN;
+        chess.w_queen |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "q" then {
+        chess.pieces[sq] = Piece.B_QUEEN;
+        chess.b_queen |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "K" then {
+        chess.pieces[sq] = Piece.W_KING;
+        chess.w_king |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "k" then {
+        chess.pieces[sq] = Piece.B_KING;
+        chess.b_king |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "N" then {
+        chess.pieces[sq] = Piece.W_KNIGHT;
+        chess.w_knight |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "n" then {
+        chess.pieces[sq] = Piece.B_KNIGHT;
+        chess.b_knight |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "R" then {
+        chess.pieces[sq] = Piece.W_ROOK;
+        chess.w_rook |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "r" then {
+        chess.pieces[sq] = Piece.B_ROOK;
+        chess.b_rook |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "B" then {
+        chess.pieces[sq] = Piece.W_BISHOP;
+        chess.w_bishop |= cast(u64)(1 << sq);
+        sq += 1;
+      } else if char == #char "b" then {
+        chess.pieces[sq] = Piece.B_BISHOP;
+        chess.b_bishop |= cast(u64)(1 << sq);
+        sq += 1;
+      } else {
+        log(tprint("Invalid fen character: %\n", char));
+        memset(chess, 0, size_of(Chess));
+        return false;
+      }
+    }
+  }
+  chess.occupied |= get_pieces(chess);
+
+  side := tokens[1];
+  if equal(side, "w") then {
+    chess.turn = Turn.WHITE;
+  } else if equal(side, "b") then {
+    chess.turn = Turn.BLACK;
+  } else {
+    log("Invalid FEN turn notation\n");
+    memset(chess, 0, size_of(Chess));
+    return false;
+  }
+
+  castling_string := tokens[2];
+  if equal(castling_string, "-") {
+    chess.castling = 0;
+  } else {
+    for i: 0..castling_string.count-1 {
+      letter := castling_string[i];
+      if letter == #char "K" then {
+        chess.castling |= Castling.W_KS;
+      } else if letter == #char "Q" then {
+        chess.castling |= Castling.W_QS;
+      } else if letter == #char "k" then {
+        chess.castling |= Castling.B_KS;
+      } else if letter == #char "q" then {
+        chess.castling |= Castling.B_QS;
+      } else {
+        log(tprint("Invalid FEN castling flags\n"));
+        memset(chess, 0, size_of(Chess));
+        return false;
+      }
+    }
+  }
+
+  en_passant_string := tokens[3];
+  if equal(en_passant_string, "-") {
+    chess.en_passant = 0;
+  } else {
+    if en_passant_string.count != 2 {
+      log(tprint("Invalid En Passant Square\n"));
+      memset(chess, 0, size_of(Chess));
+      return false;
+    }
+    r := cast(int)(en_passant_string[0] - #char "a");
+    c := cast(int)(en_passant_string[1] - #char "1");
+    bitboard := cast(u64) (1 << (c*8 + r));
+    if chess.turn == Turn.WHITE && bitboard & (xx ~rank_6) then {
+      log(tprint("Invalid En Passant Square\n"));
+      memset(chess, 0, size_of(Chess));
+      return false;
+    } else if chess.turn == Turn.BLACK && bitboard & (xx ~rank_3) then {
+      log(tprint("Invalid En Passant Square\n"));
+      memset(chess, 0, size_of(Chess));
+      return false;
+    } else {
+      chess.en_passant = bitboard;
+    }
+  }
+  chess.hash = zobrist_hash(chess);
+  return true;
+
+}
+
 get_pieces :: (using chess: *Chess) -> u64 #expand { 
   return w_pawn|w_bishop|w_knight|w_rook|w_queen|w_king|
          b_pawn|b_bishop|b_knight|b_rook|b_queen|b_king;

@@ -14,6 +14,9 @@
 %define dbs_ext_read 0x42
 %define dbs_get_parameters 0x48
 
+%define kbs 0x16 ; Key bios services
+%define kbs_get_status 0x1
+
 %define sbe 0x15
 
 %define PRINT_MODES 0
@@ -115,63 +118,17 @@ start:
     mov ax, vbs_vesa_info
     int vbs
     cmp al, vesa_success
-    jne .detect_vbe_fail
+    jne autoselect_vesa_mode.detect_vbe_fail
 
-    ; === Iterate VESA mode numbers ===
-    mov bx, vbe_info_block.video_modes
+    ; === Detect if the V key is pressed for manual video mode selection ===
+    xor ax, ax
+    mov ah, kbs_get_status
+    int kbs
+    cmp al, 0x2f
 
-  .detect_vbe_loop:
-    mov cx, [bx]
-    cmp cx, 0xffff
-    je .detect_vbe_fail
+    jmp autoselect_vesa_mode
 
-    mov di, vbe_mode
-    mov ax, vbs_vesa_mode_info
-    int vbs
-
-    ; === Display VESA mode parameters ===
-    ; pusha
-    ; mov bx, [bx]
-    ; call write_hex
-    ; 
-    ; mov bx, [vbe_mode.width]
-    ; call write_hex
-    ; 
-    ; mov bx, [vbe_mode.height]
-    ; call write_hex
-    ; 
-    ; xor bx, bx
-    ; mov byte bl, [vbe_mode.bpp]
-    ; call write_hex
-    ; call newline
-    ; popa
-
-    add bx, 2
-
-    cmp word [vbe_mode.width], vesa_width
-    jne .detect_vbe_loop
-    cmp word [vbe_mode.height], vesa_height
-    jne .detect_vbe_loop
-    cmp byte [vbe_mode.bpp], vesa_depth
-    jne .detect_vbe_loop
-    mov ax, [vbe_mode.attributes]
-    test ax, 1 << 7
-    jz .detect_vbe_loop
-
-    jmp .detect_vbe_succeed
-
-  .detect_vbe_fail:
-    mov bx, .vesa_fail_message
-    call write_string
-    jmp $
-
-  .detect_vbe_succeed:
-    mov ax, vbs_vesa_set_mode
-    mov bx, [bx - 2]
-    or bx, 0x4000
-    int vbs
-    cmp ax, vesa_success
-    jne .detect_vbe_fail
+  .vesa_end:
 %endif ; ENABLE_VESA
 
     mov dword eax, [vbe_mode.buffer]
@@ -261,10 +218,71 @@ write_hex:
   .char: db 0, 0
   .prefix: db '0x', 0
 
+%if ENABLE_VESA
+autoselect_vesa_mode:
+    ; === Iterate VESA mode numbers ===
+    mov bx, vbe_info_block.video_modes
+
+  .detect_vbe_loop:
+    mov cx, [bx]
+    cmp cx, 0xffff
+    je .detect_vbe_fail
+
+    mov di, vbe_mode
+    mov ax, vbs_vesa_mode_info
+    int vbs
+
+    ; === Display VESA mode parameters ===
+    ; pusha
+    ; mov bx, [bx]
+    ; call write_hex
+    ; 
+    ; mov bx, [vbe_mode.width]
+    ; call write_hex
+    ; 
+    ; mov bx, [vbe_mode.height]
+    ; call write_hex
+    ; 
+    ; xor bx, bx
+    ; mov byte bl, [vbe_mode.bpp]
+    ; call write_hex
+    ; call newline
+    ; popa
+
+    add bx, 2
+
+    cmp word [vbe_mode.width], vesa_width
+    jne .detect_vbe_loop
+    cmp word [vbe_mode.height], vesa_height
+    jne .detect_vbe_loop
+    cmp byte [vbe_mode.bpp], vesa_depth
+    jne .detect_vbe_loop
+    mov ax, [vbe_mode.attributes]
+    test ax, 1 << 7
+    jz .detect_vbe_loop
+
+    jmp .detect_vbe_succeed
+
+  .detect_vbe_fail:
+    mov bx, .vesa_fail_message
+    call write_string
+    jmp $
+
+  .detect_vbe_succeed:
+    mov ax, vbs_vesa_set_mode
+    mov bx, [bx - 2]
+    or bx, 0x4000
+    int vbs
+    cmp ax, vesa_success
+    jne .detect_vbe_fail
+
+    jmp start.vesa_end
+  .vesa_fail_message: db '  No appropriate VESA mode was found, or VESA is not supported.', 0xa, 0xd, 0
+%endif
+
 sector_size equ 0x200
 sectors_per_load equ 0x1;
 
-[bits 16]
 disk_address_packet:
   .size:        db 10h
   .reserved:    db 0

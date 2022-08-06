@@ -1,5 +1,7 @@
 
 #import "Theos";
+#import "Theos_Utilities";
+
 #load "chess_engine/movegen.jai";
 #load "chess_engine/search.jai";
 #load "chess_engine/eval.jai";
@@ -45,12 +47,20 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
     init_between_bitboards();
     init_magic_bitboards();
 
-    chess_startpos(*chess);
     clear_hash_table();
-    chess_startpos(*chess);
+
+    in := input();
+    if in.value_pointer {
+        write_string("Loading fen...\n");
+        if in.type.type == .STRING {
+            chess_fen(*chess, tprint("%", in));
+        } else write_string("It is the wrong type!\n");
+    } else {
+        chess_startpos(*chess);
+    }
 
     pieces_pnm := read_file("chess_pieces.ppm");
-    pieces = parse_pnm(pieces_pnm.data);
+    pieces = parse_pnm(pieces_pnm);
     window = create_window(window_size, window_size);
     defer close_window(window);
 
@@ -60,6 +70,8 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
     last_move_square = -1;
     draw_board();
     repaint();
+
+    defer write_fen();
 
     while true {
         white_to_move = true;
@@ -82,6 +94,75 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
     }
 }
 
+write_fen :: () {
+    piece_table :: " KQRBNPkqrbnp";
+
+    space: [128] u8;
+    cursor: int;
+
+    empty_count: int;
+    for < chess.pieces {
+        index := 63 - it_index;
+        if index && index % 8 == 0 {
+            if empty_count {
+                space[cursor] = cast(u8) (#char "0" + empty_count);
+                empty_count = 0;
+                cursor += 1;
+            }
+
+            space[cursor] = #char "/";
+            cursor += 1;
+        }
+
+        if it == .NONE {
+            empty_count += 1;
+            continue;
+        } else if empty_count {
+            space[cursor] = cast(u8) (#char "0" + empty_count);
+            empty_count = 0;
+            cursor += 1;
+        }
+
+        space[cursor] = piece_table[cast(int) it];
+        cursor += 1;
+    }
+
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = cast(u8) ifx white_to_move #char "w" else #char "b";
+    cursor += 1;
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = #char "-";
+    cursor += 1;
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = #char "-";
+    cursor += 1;
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = #char "0";
+    cursor += 1;
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = #char "0";
+
+    time := theos_get_time();
+    apollo: Apollo_Time;
+    apollo.low = time.low;
+    apollo.high = time.high;
+    ct := theos_apollo_to_calendar(apollo);
+    filename := tprint("chess_games/chess_game_%1%2%3", ct.hour, ct.minute, ct.second);
+
+    // Fix this dumbass API
+    create_file(filename);
+
+    content: string;
+    content.data = space.data;
+    content.count = cursor;
+    write_file(filename, xx content);
+}
+
 white_to_move: bool;
 
 check_win_condition :: () -> bool {
@@ -94,7 +175,7 @@ check_win_condition :: () -> bool {
         return true;
     }
 
-    if !check && !moves_arr.count {
+    if !check && moves_arr.count == 0 {
         write_string("Stalemate!\n");
         return true;
     }
@@ -297,111 +378,75 @@ blend :: (target: u32, source: u32, t: float) -> u32 #expand {
     return result;
 }
 
-write_hex :: (number: u16) {
-    result: [4] u8;
 
-    table := "0123456789abcdef";
-    for 0..3 {
-        index := number >> (it * 4);
-        index &= 0xf;
+theos_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
 
-        result[4 - it - 1] = table[index];
-    }
-    write_string(xx result);
-}
+    APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
+    milliseconds := to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);
 
-write_int :: (number: int) {
-    negative: bool;
-    buffer: [] u8;
-    buffer.count = 30;
-    buffer.data = map_memory(30);
+    seconds      := milliseconds / 1000;
+    minutes      := seconds      / 60;
+    hours        := minutes      / 60;
+    total_days   := hours        / 24;
 
-    _number := number;
-    if number < 0 _number *= -1;
+    milliseconds -= seconds      * 1000;
+    seconds      -= minutes      * 60;
+    minutes      -= hours        * 60;
+    hours        -= total_days   * 24;
 
-    for 0..buffer.count - 1 {
-        rem := _number % 10;
-        buffer[29 - it] =  #char "0" + cast(u8) rem;
-        _number /= 10;
+    years := total_days / 365;
+    leap_year_count := leap_years_before(years + 2);
 
-        if _number == 0 {
-            result: string = ---;
-            result.data = buffer.data + 29 - it;
-            result.count = it + 1;
-            write_string(result);
-        }
-    }
-}
+    years = (total_days - leap_year_count * 366) / 365;
+    years += leap_year_count;
 
+    days := total_days - (years - leap_year_count) * 365;
+    days -= leap_year_count * 366;
 
+    years += 1970;
+    is_leap_year := (years % 4 == 0) && (!(years % 100 == 0) || (years % 400 == 0));
+    if is_leap_year && days < 59 days += 1;
 
-Pnm :: struct {
-    width: int;
-    height: int;
+    ct: Calendar_Time;
 
-    type: enum {
-        UNINITIALIZED :: 0;
-        ASCII_BITMAP;
-        ASCII_GRAYMAP;
-        ASCII_PIXMAP;
-        BITMAP;
-        GRAYMAP;
-        PIXMAP;
-    }
+    days_in_month := int.[
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ];
 
-    data: *u8;
-}
+    month: int;
+    for days_in_month {
+        month += 1;
 
-parse_pnm :: (buffer: *u8) -> Pnm {
-
-    pnm: Pnm;
-    pnm.type = xx (buffer[1] - #char "0");
-
-    is_whitespace :: (char: u8) -> bool {
-        return char == 0x20
-            || char == 0x09
-            || char == 0x0a
-            || char == 0x0b
-            || char == 0x0c
-            || char == 0x0d
-            || char == #char "#";
-    }
-
-    ConsumeWhitespaceAndComments :: () #expand {
-        while is_whitespace(buffer[`cursor]) {
-            if buffer[`cursor] == #char "#" {
-                while buffer[`cursor] != 0xa `cursor += 1;
-            }
-            cursor += 1;
+        if days >= it {
+            days -= it;
+        } else {
+            month = xx it_index;
+            break;
         }
     }
 
-    ParseInt :: () -> int #expand {
-        digit := buffer[`cursor]; //`
-        result: int;
+    ct.year = xx years;
+    // is_leap_year := (ct.year % 4 == 0) && (!(ct.year % 100 == 0) || (ct.year % 400 == 0));
+    // if is_leap_year && month < 2 month_day += 1;
 
-        while !is_whitespace(digit) {
-            result *= 10;
-            result += digit - #char "0";
-            `cursor += 1;
-            digit = buffer[`cursor];
-        }
-        return result;
-    }
+    ct.day_of_week_starting_at_0 = xx ((4 + total_days) % 7);
 
-    cursor := 2;
-    ConsumeWhitespaceAndComments();
-    pnm.width = ParseInt();
+    ct.month_starting_at_0 = xx month;
+    ct.day_of_month_starting_at_0 = xx days;
 
-    ConsumeWhitespaceAndComments();
-    pnm.height = ParseInt();
-
-    ConsumeWhitespaceAndComments();
-    max_value := ParseInt();
-
-    ConsumeWhitespaceAndComments();
-    pnm.data = buffer + cursor;
-
-    return pnm;
+    ct.hour = xx hours;
+    ct.minute = xx minutes;
+    ct.second = xx seconds;
+    ct.millisecond = xx milliseconds;
+    return ct;
 }
 
+leap_years_before :: (year: s64) -> s64 {
+    floor_div :: (dividend: int, $ divisor: int) -> int {
+        offset := cast(int) (dividend <= 0 && dividend % divisor);
+        return dividend / divisor - offset;
+    }
+
+    result := floor_div(year, 4) - floor_div(year, 100) + floor_div(year, 400);
+    return result;
+}

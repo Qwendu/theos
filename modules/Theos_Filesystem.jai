@@ -22,6 +22,7 @@ Directory_Entry :: struct {
 
     modified: Apollo_Time;
     created: Apollo_Time;
+    clock_generation: int;
 
 #place name;
     name_extent: Extent;
@@ -38,6 +39,7 @@ Master_Block :: struct {
 
         magic: u64;
         version: int;
+        clock_generation: int;
     }
     padding: [FS_BLOCKSIZE - size_of(type_of(info))] u8;
 }
@@ -56,16 +58,20 @@ scratch_space: [FS_BLOCKSIZE] u8 #align FS_BLOCKSIZE;
 
 fs_bit_array: Bit_Array;
 
+// "bytes_required" is the total number of bytes required of this extent and the other extents, not an additional number of bytes, so include the existing file size if appending
 maybe_create_or_grow_extent :: (extent: *Extent, bytes_required: int) -> space_created: int {
     blocks_required := (bytes_required + FS_BLOCKSIZE - 1) / FS_BLOCKSIZE;
 
-    defer write_block(1, xx *bitmap, fs_user_data);
+    // Early exit if the extent is already big enough
+    if blocks_required <= extent.block_count return 0;
 
+    // Create a new extent that's large enough if it doesn't exist
     if extent.block_count == 0 && blocks_required > 0 {
         contiguous_bits_found: int;
         bit: int;
 
         while true {
+            // Find the first long enough run of free disk blocks... we should switch to choosing randomised starting points for finding runs, to maximise chances of being able to grow extents later
             if !fs_bit_array[bit] {
                 contiguous_bits_found += 1;
             } else {
@@ -83,22 +89,23 @@ maybe_create_or_grow_extent :: (extent: *Extent, bytes_required: int) -> space_c
             }
             bit += 1;
         }
-    }
+    } else {
+        // There is an extent, try to grow it as much as needed or possible
+        block_index := extent.block_index + extent.block_count;
+        new_blocks_required := blocks_required - extent.block_count;
 
-    block_index := extent.block_index + extent.block_count;
-    blocks_required -= extent.block_count;
+        for 0..new_blocks_required - 1 {
+            if fs_bit_array[block_index + it] {
+                // If there are not enough free blocks after the end of the extent
 
-    for 0..blocks_required - 1 {
-        if fs_bit_array[block_index + it] {
-            extent.block_count += it;
-            return it * FS_BLOCKSIZE;
+                extent.block_count += it;
+                return it * FS_BLOCKSIZE;
+            }
+            set_bit(*fs_bit_array, block_index + it);
         }
-        set_bit(*fs_bit_array, block_index + it);
-    }
 
-    if blocks_required > 0 {
-        extent.block_count += blocks_required;
-        return blocks_required * FS_BLOCKSIZE;
+        extent.block_count += new_blocks_required;
+        return new_blocks_required * FS_BLOCKSIZE;
     }
 
     return 0;
@@ -135,6 +142,7 @@ read_data_from_extent :: (extent: Extent, data: *u8, count: int) -> read: int {
         return min(count, blocks_to_read * FS_BLOCKSIZE);
     }
 
+    // Read extent function callback may not be implemented by the user, in which case we read the extent block-by-block
     for 0..blocks_to_read - 1 {
         data_pointer := data + it * FS_BLOCKSIZE;
         location := FS_BASE_ADDRESS + (extent.block_index + it) * FS_BLOCKSIZE;
@@ -233,12 +241,13 @@ find_entry :: (path: [] string) -> Entry_Loc, bool {
 }
 
 create_entry :: (path_string: string, directory: bool) -> bool {
-    for *filesystem_cache.array {
-        write_block(it_index, xx it, fs_user_data);
-    }
+    defer flush_filesystem();
 
     path := parse_path(path_string);
     assert(path.count > 0);
+
+    existing_loc, existing_success := find_entry(path);
+    if existing_success return false;
 
     name := path[path.count - 1];
     path.count -= 1;
@@ -252,10 +261,19 @@ create_entry :: (path_string: string, directory: bool) -> bool {
     now := get_time(fs_user_data);
     dir_block_index, new_entry_index: int;
     {
-        read\      _block(entry_loc.directory_block, xx block, fs_user_data);
+        read\      _block(entry_loc.directory_block, xx block, fs_user_data); // "block" is the block with the directory entry representing the directory in which to create the new entry
         defer write_block(entry_loc.directory_block, xx block, fs_user_data);
 
         entry := block + entry_loc.directory_index;
+
+        entries_per_block := FS_BLOCKSIZE / size_of(Directory_Entry);
+        blocks_required := entry.directory_entry_count / entries_per_block + 1;
+
+        blocks_available: int;
+        for entry.extents blocks_available += it.block_count;
+
+        bytes_required := blocks_required * FS_BLOCKSIZE;
+
         dir_block_index = entry.extents[0].block_index;
         new_entry_index = entry.directory_entry_count;
 
@@ -279,10 +297,6 @@ create_entry :: (path_string: string, directory: bool) -> bool {
         memcpy(new_entry.name.data, name.data, name.count);
         new_entry.created = now;
         new_entry.modified = now;
-    }
-
-    for *filesystem_cache.array {
-        read_block(it_index, xx it, fs_user_data);
     }
 
     return true;
@@ -316,9 +330,7 @@ create_file :: (name: string) {
 }
 
 write_file :: (path: string, data: [] u8) {
-    for *filesystem_cache.array {
-        write_block(it_index, xx it, fs_user_data);
-    }
+    defer flush_filesystem();
 
     loc, success := find_entry(parse_path(path));
     assert(success);
@@ -343,16 +355,11 @@ write_file :: (path: string, data: [] u8) {
     dir_entry.file_size = data.count;
 
     write_block(loc.directory_block, block, fs_user_data);
-    for *filesystem_cache.array {
-        read_block(it_index, xx it, fs_user_data);
-    }
     free(block);
 }
 
 read_file :: (path: string) -> [] u8 {
-    for *filesystem_cache.array {
-        write_block(it_index, xx it, fs_user_data);
-    }
+    defer flush_filesystem();
 
     loc, success := find_entry(parse_path(path));
     if !success return .[];
@@ -381,9 +388,6 @@ read_file :: (path: string) -> [] u8 {
     result.count = dir_entry.file_size;
 
     free(block);
-    for *filesystem_cache.array {
-        read_block(it_index, xx it, fs_user_data);
-    }
     return result;
 }
 
@@ -396,15 +400,13 @@ Directory_Entry_Info :: struct {
 }
 
 list_directory :: (path: string) -> [] Directory_Entry_Info {
-    for *filesystem_cache.array {
-        write_block(it_index, xx it, fs_user_data);
-    }
+    defer flush_filesystem();
 
     block := cast(*Directory_Entry) alloc(FS_BLOCKSIZE);
     defer free(block);
 
     entry_loc, success := find_entry(parse_path(path));
-    assert(success);
+    if !success return .[];
 
     read_block(entry_loc.directory_block, xx block, fs_user_data);
 
@@ -440,9 +442,8 @@ get_root :: () -> *Directory_Entry {
 }
 
 flush_filesystem :: () {
-    for *filesystem_cache.array {
-        write_block(it_index, xx it, fs_user_data);
-    }
+    // write_block(0, xx *filesystem_cache.master, fs_user_data);
+    write_block(1, xx *filesystem_cache.bitmap, fs_user_data);
 }
 
 MAGIC :: #run -> u64 {
@@ -453,7 +454,6 @@ MAGIC :: #run -> u64 {
 
 format_filesystem :: (name: string) -> bool {
     for *filesystem_cache.array {
-        read_block(it_index, xx it, fs_user_data);
         memset(it, 0, FS_BLOCKSIZE);
     }
 

@@ -10,22 +10,18 @@ Person :: struct {
     }
 
     Something: struct {
-        a: int = 10; b: string = "lol";
+        a := 10;
+        b := "lol";
     }
 }
 
 main :: () {
     people: [] Person = .[
-        Person.{ "Maurice", 43, .MALE, .{} },
-        Person.{ "Jon", 20, .MALE, .{} },
+        Person.{ "Maurice",   43, .MALE,   .{} },
+        Person.{ "Jon",       20, .MALE,   .{} },
         Person.{ "Anastasia", 75, .FEMALE, .{} },
-        Person.{ "Clarence", 25, .MALE, .{} },
+        Person.{ "Clarence",  25, .MALE,   .{} },
     ];
 
     output(people);
-
-    test: [] string = .[
-        "This", "is", "a", "fun", "test"
-    ];
-    // output(test);
 }

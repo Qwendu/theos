@@ -342,7 +342,7 @@ init_ide_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device
         bus_master_base = xx base;
     }
 
-    // Scan the two four drive slots of a standard IDE controller.
+    // Scan the four drive slots of a standard IDE controller
     for channel: 0..1 {
         for device_type: Ide_Device_Type.[.MASTER, .SLAVE] {
 
@@ -363,19 +363,19 @@ init_ide_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device
             ide_write(*new, .DRIVE_SELECT, xx device_type);
             sleep(1);
 
-            // IDENTIFY, to determine if the drive exists.
+            // IDENTIFY, to determine if the drive exists
             ide_write(*new, .COMMAND, Ide_Command.IDENTIFY);
             sleep(1);
 
             status := cast(Ide_Status) ide_read(*new, .STATUS);
-            if status == .NONE continue; // A clear status register indicates there is no device here.
+            if status == .NONE continue; // A clear status register indicates there is no device here
 
             start := get_system_time();
             while true {
-                if status & .ERROR continue device_type; // Not ATA, may be ATAPI, but we don't support it yet.
+                if status & .ERROR continue device_type; // Not ATA, may be ATAPI, but we don't support it yet
 
                 if !(status & .BUSY) && (status & .TRANSFER_REQUESTED) {
-                    // Ready to transfer identification space in response to IDENTIFY.
+                    // Ready to transfer identification space in response to IDENTIFY
                     break;
                 }
 
@@ -390,7 +390,7 @@ init_ide_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device
                 id[it] = in(new.io_base + xx Ide_Register.DATA, u32);
             }
 
-            // ATA strings flip each pair of bytes.
+            // ATA strings flip each pair of bytes
             str := cast(*u8) id.data + 54;
             for 0..new.model_string.count / 2 - 1 {
                 new.model_string[it * 2] = str[it * 2 + 1];
@@ -402,6 +402,7 @@ init_ide_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device
             msd.ide = new;
 
             msd.sector_count = cast(int) id.data[30];
+            assert(msd.sector_count > 0);
 
             msd.bus_master_base = bus_master_base + cast(u16) channel * 8;
             msd.supports_busmastering = bus_master_support;
@@ -425,16 +426,16 @@ Ide_Transfer_Direction :: enum {
     WRITE;
 }
 
-ide_bus_master_transfer :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, base: *void, count: u64, start_address_on_disk: u64, call_site := #caller_location) {
-    assert(cast(u64) base % 0x200 == 0);
+ide_bus_master_transfer :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, memory_address: *void, number_of_bytes: u64, disk_address: u64, call_site := #caller_location) {
+    assert(cast(u64) memory_address % 0x200 == 0);
 
     assert(dev.controller_type == .IDE);
     assert(dev.supports_busmastering);
 
-    target, present := get_physical_address(base);
+    target, present := get_physical_address(memory_address);
     assert(present);
-    sector_count : u64 = (count                 + 0x1ff) / 0x200;
-    lba          : u64 = (start_address_on_disk + 0x1ff) / 0x200;
+    sector_count : u64 = (number_of_bytes + 0x1ff) / 0x200;
+    lba          : u64 = (disk_address    + 0x1ff) / 0x200;
 
     first_sector_count := (0x10_000 - target % 0x10_000) / 0x200;
     if first_sector_count > sector_count first_sector_count = sector_count;
@@ -474,7 +475,7 @@ ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Tr
     out(dev.bus_master_base + xx PRIMARY_COMMAND, direction_bit);
 
     status := port_read(dev.bus_master_base + xx PRIMARY_STATUS);
-    out(dev.bus_master_base + xx PRIMARY_STATUS, cast(u8) (status & ~(0x4 | 0x2)));
+    out(dev.bus_master_base + xx PRIMARY_STATUS, /* cast(u8) (status & ~(0x4 | 0x2)) */ cast(u8) 6);
 
     ide_write(dev, DRIVE_SELECT, (cast(u8) sector_lba >> 24) | 0xe0);
 

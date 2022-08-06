@@ -5,7 +5,7 @@
 main :: () {
     time := theos_get_time();
     calendar := theos_apollo_to_calendar(<< cast(*Apollo_Time) *time);
-    write_string(tprint("The time is %.\n", calendar_to_string(calendar)));
+    output(tprint("The time is %.\n", calendar_to_string(calendar)));
 }
 
 

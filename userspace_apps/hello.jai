@@ -2,5 +2,5 @@
 #import "Theos";
 
 main :: () {
-    write_string("Hello world\n");
+    output("Hello world\n");
 }
