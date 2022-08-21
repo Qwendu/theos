@@ -215,6 +215,8 @@ execute_draw_list :: (list: *Draw_List_Entry, surface: Surface, debug_surface_ex
     }
 }
 
+// Probably move some of this into shell.jai somehow
+
 init_graphics :: (boot_data: Boot_Data) {
     g := *graphics;
 
@@ -223,6 +225,9 @@ init_graphics :: (boot_data: Boot_Data) {
 
     flags := Page_Flags.READ_WRITE | .PRESENT | .PAGE_SIZE;
     g.vesa_framebuffer = map_memory(screen_size, physical_address = boot_data.vesa_framebuffer, flags);
+
+    cursor_file := read_file("system/cursor.ppm");
+    cursor_graphic = parse_pnm(cursor_file);
 }
 
 paint_screen :: () {
@@ -233,8 +238,92 @@ paint_screen :: () {
 
     screen_size := g.screen.width * g.screen.height * size_of(u32);
     memcpy(g.vesa_framebuffer, g.screen.buffer, xx screen_size);
+    move_mouse(mouse.position_x / 2, mouse.position_y / 2);
 }
 
+old_mouse_x: int;
+old_mouse_y: int;
+
+cursor_graphic: Pnm;
+last_mouse_move: Basic.Apollo_Time;
+
+get_the_fucking_time :: get_system_time;
+
+move_mouse :: (new_x: int, new_y: int) {
+    if !do_mouse return;
+
+    g := *graphics;
+    cursor_size := 32;
+
+    // Fix this, this can be "wound up" more and more if you keep moving the mouse in the same direction
+    while new_x + cursor_size > g.screen.width new_x -= g.screen.width;
+    while new_y + cursor_size > g.screen.height new_y -= g.screen.height;
+
+    while new_x < 0 new_x += g.screen.width;
+    while new_y < 0 new_y += g.screen.height;
+
+    using Basic;
+    fade := get_the_fucking_time() - last_mouse_move;
+    fade -= seconds_to_apollo(1);
+
+    if fade < seconds_to_apollo(0) fade = seconds_to_apollo(0);
+    if fade > seconds_to_apollo(1) fade = seconds_to_apollo(1);
+
+    if new_x != old_mouse_x || new_y != old_mouse_y {
+        last_mouse_move = get_the_fucking_time();
+    }
+
+    // Clear the old location
+    start := old_mouse_x + g.screen.width * old_mouse_y;
+
+    for 0..cursor_size - 1 {
+        memcpy(g.vesa_framebuffer + start, g.screen.buffer + start, cursor_size * size_of(u32));
+        start += g.screen.width;
+        if start + cursor_size * size_of(u32) > g.screen.height * g.screen.width {
+            break;
+        }
+    }
+
+    fade_s := cast(float) to_milliseconds(fade) / 1000;
+    // Paint the new location
+    start = new_x + g.screen.width * new_y;
+
+    cursor: int;
+    for y: 0..cursor_size-1 {
+        if new_y + y >= g.screen.height break;
+        for x: 0..cursor_size-1 {
+            alpha   := cast(float) cursor_graphic.data[cursor] / 255;
+            border  := cast(float) cursor_graphic.data[cursor + 1] / 255 + alpha;
+
+            index := (x) + (y) * g.screen.width;
+            index += new_x;
+            index += new_y * g.screen.width;
+
+            // color : u32 = xx ifx black then theme.background else theme.accent;
+            g.vesa_framebuffer[index] = blend(theme.accent.as_u32, g.vesa_framebuffer[index], min(alpha + fade_s, 1));
+            g.vesa_framebuffer[index] = blend(theme.foreground.as_u32, g.vesa_framebuffer[index], min(border + fade_s, 1));
+
+            cursor += 3;
+        }
+        cursor = y * cursor_size * 3;
+    }
+
+    old_mouse_x = new_x;
+    old_mouse_y = new_y;
+
+    blend :: (target: u32, source: u32, t: float) -> u32 #expand {
+        result: u32;
+        c :: (color: u32, offset: u32) -> u32 #expand {
+            return (color >> offset) & 0xff;
+        }
+
+        result  = (cast(u32) (cast(float) c(target, 16) * (1 - t) + cast(float) c(source, 16) * t)) << 16;
+        result |= (cast(u32) (cast(float) c(target,  8) * (1 - t) + cast(float) c(source,  8) * t)) << 8;
+        result |= (cast(u32) (cast(float) c(target,  0) * (1 - t) + cast(float) c(source,  0) * t));
+
+        return result;
+    }
+}
 
 
 Blitter :: struct {
@@ -245,8 +334,8 @@ Blitter :: struct {
 
 render_blitter :: (blit: *Blitter, surface: Surface) {
     for 0..blit.source_surface.height - 1 {
-        target := surface.buffer + blit.draw.x;
-        target += blit.draw.y * surface.stride;
+        target := surface.buffer + blit.draw._dirty_subregion.x;
+        target += blit.draw._dirty_subregion.y * surface.stride;
         target += it * surface.stride;
 
         source := blit.source_surface.buffer;

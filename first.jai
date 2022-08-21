@@ -346,7 +346,7 @@ interrupt_handlers: [] struct {
 
     write_string("\n=== Creating Floppy Image ===\n");
     {
-        DISK_SIZE :: 0x16_8000 * 24;
+        DISK_SIZE :: 0x16_8000 * 32;
         disk_image := cast(*u8) alloc(DISK_SIZE);
         cursor: int;
 
@@ -401,17 +401,6 @@ interrupt_handlers: [] struct {
                 write_file(name, cast([] u8) content);
             }
         }, visit_directories = true);
-
-        create_entry("themes", directory = true);
-        for themes {
-            name := join("themes/", it.name);
-            create_file(name);
-
-            content: [] u8;
-            content.data = xx *it.theme;
-            content.count = size_of(Theme);
-            write_file(name, content);
-        }
 
         flush_filesystem();
 

@@ -95,7 +95,6 @@ kernel_entry :: () {
         cpu = get_cpu_info();
         init_physical_allocator();
         page_table_init();
-        enable_ps2();
         cmos_enable_irq(true);
         // cmos_set_rate(15);
 
@@ -141,6 +140,8 @@ kernel_entry :: () {
         ct := cmos_get_calendar_time();
         boot_time = theos_calendar_to_apollo(ct);
 
+        enable_ps2();
+
         #if !ENABLE_VESA {
             print("This is where we start entering the shell.\n");
             print("However, we're in VGA debugging mode from where we can't draw anything, so we're going to halt.\n");
@@ -164,6 +165,7 @@ kernel_entry :: () {
 
             handle_keyboard_events();
             update_shell();
+            move_mouse(mouse.position_x / 2, mouse.position_y / 2);
         }
     }
 }

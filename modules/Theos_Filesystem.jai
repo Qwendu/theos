@@ -270,7 +270,10 @@ create_entry :: (path_string: string, directory: bool) -> bool {
         blocks_required := entry.directory_entry_count / entries_per_block + 1;
 
         blocks_available: int;
-        for entry.extents blocks_available += it.block_count;
+        for entry.extents {
+            blocks_available += it.block_count;
+            // if blocks_available
+        }
 
         bytes_required := blocks_required * FS_BLOCKSIZE;
 
@@ -296,7 +299,7 @@ create_entry :: (path_string: string, directory: bool) -> bool {
         assert(name.count < 32);
         memcpy(new_entry.name.data, name.data, name.count);
         new_entry.created = now;
-        new_entry.modified = now;
+        new_entry.modified = now; 
     }
 
     return true;

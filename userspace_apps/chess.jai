@@ -39,7 +39,7 @@ Player_Kind :: enum {
 main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
     write_string("Loading neural network...\n");
     repaint();
-    nn := read_file("nn-04cf2b4ed1da.nnue");
+    nn := read_file("chess_res/nn-04cf2b4ed1da.nnue");
     defer unmap_memory(nn.count, nn.data);
     nnue_init(nn);
 
@@ -59,7 +59,7 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
         chess_startpos(*chess);
     }
 
-    pieces_pnm := read_file("chess_pieces.ppm");
+    pieces_pnm := read_file("chess_res/chess_pieces.ppm");
     pieces = parse_pnm(pieces_pnm);
     window = create_window(window_size, window_size);
     defer close_window(window);
@@ -152,7 +152,7 @@ write_fen :: () {
     apollo.low = time.low;
     apollo.high = time.high;
     ct := theos_apollo_to_calendar(apollo);
-    filename := tprint("chess_games/chess_game_%1%2%3", ct.hour, ct.minute, ct.second);
+    filename := tprint("chess_res/games/%1%2%3", ct.hour, ct.minute, ct.second);
 
     // Fix this dumbass API
     create_file(filename);
@@ -377,6 +377,7 @@ blend :: (target: u32, source: u32, t: float) -> u32 #expand {
 
     return result;
 }
+
 
 
 theos_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {

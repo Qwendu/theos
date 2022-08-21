@@ -1,6 +1,7 @@
 
 #import "Theos";
 #import "String";
+#import "Basic";
 
 main :: (file_name: string) {
     file := read_file(join("themes/", file_name));
@@ -16,13 +17,24 @@ main :: (file_name: string) {
         return;
     }
 
-    if file.count < size_of(Theme) {
-        write_string("Can't set theme: this file is too small to contain a theme: \"");
-        write_string(file_name);
-        write_string("\"\n");
-        return;
+    new_theme: Theme;
+    number: string;
+    number.count = 8;
+    number.data = file.data;
+
+    for *new_theme.array {
+        << it = cast(u32) string_to_int(number, base = 16);
+        // number.count += 7;
+        number.data += 9;
     }
 
-    theme := << cast(*Theme) file.data;
-    set_theme(theme);
+    number.count = 4;
+    offset := cast(int) number.data - cast(int) file.data;
+    if file.count >= (offset + number.count) {
+        if number == "true" {
+            new_theme.shadow = 1.0;
+        }
+    }
+
+    set_theme(new_theme);
 }

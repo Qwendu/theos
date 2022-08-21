@@ -317,6 +317,9 @@ Theme :: struct {
     accent:      u32; @hex
 
     shadow: float;
+
+#place background;
+    array: [6] u32;
 }
 
 Apollo :: struct {

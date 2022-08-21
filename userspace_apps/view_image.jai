@@ -37,6 +37,7 @@ main :: (file_name: string) {
                 break;
             }
         }
+        if message.kind == .NONE #asm { hlt; }
     }
 }
 

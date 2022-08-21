@@ -426,6 +426,10 @@ Ide_Transfer_Direction :: enum {
     WRITE;
 }
 
+ide_bus_master_transfer_new :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, memory_address: *void, number_of_bytes: u64, disk_address: u64, call_site := #caller_location) {
+    
+}
+
 ide_bus_master_transfer :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, memory_address: *void, number_of_bytes: u64, disk_address: u64, call_site := #caller_location) {
     assert(cast(u64) memory_address % 0x200 == 0);
 
@@ -460,6 +464,15 @@ ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Tr
     using Pci_Bus_Master_Port;
     if !sector_count return;
 
+    start := get_system_time();
+    while true {
+        status := cast(Ide_Status) ide_read(dev, .STATUS);
+        if !(status & .BUSY) break;
+
+        elapsed := Basic.operator-(get_system_time(), start);
+        assert(Basic.to_milliseconds(elapsed) < 1000, "ATA DMA read timeout");
+    }
+
     table: Physical_Region_Descriptor #align 8;
     table.base = cast(u32) physical;
     table.byte_count = 512 * cast(u16) sector_count;
@@ -475,12 +488,12 @@ ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Tr
     out(dev.bus_master_base + xx PRIMARY_COMMAND, direction_bit);
 
     status := port_read(dev.bus_master_base + xx PRIMARY_STATUS);
-    out(dev.bus_master_base + xx PRIMARY_STATUS, /* cast(u8) (status & ~(0x4 | 0x2)) */ cast(u8) 6);
+    out(dev.bus_master_base + xx PRIMARY_STATUS, cast(u8) (status & ~(0x4 | 0x2)));
 
     ide_write(dev, DRIVE_SELECT, (cast(u8) sector_lba >> 24) | 0xe0);
 
-    ide_write(dev, DEVICE_CONTROL, 0x00);
-    ide_write(dev, FEATURE, 0x00);
+    // ide_write(dev, DEVICE_CONTROL, 0x00);
+    // ide_write(dev, FEATURE, 0x00);
     ide_write(dev, SECTOR_COUNT, cast(u8) sector_count);
 
     ide_write(dev, LBA_LOW,  cast(u8) (sector_lba));
@@ -493,7 +506,7 @@ ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Tr
         ide_write(dev, COMMAND, Ide_Command.WRITE_DMA);
     } else assert(false);
 
-    start := get_system_time();
+    start = get_system_time();
     while true {
         status := cast(Ide_Status) ide_read(dev, .STATUS);
 

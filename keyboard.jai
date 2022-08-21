@@ -1,6 +1,6 @@
 
-scan_table         :: "\0#1234567890-=\0\tqwertyuiop[]\0\0asdfghjkl;'`\0\\zxcvbnm,./\0*\0 ";
-scan_table_shifted :: "\0#!@#$%^&*()_+\0\0QWERTYUIOP{}\0\0ASDFGHJKL:\"~\0|ZXCVBNM<>?\0*\0 ";
+// scan_table         :: "\0#1234567890-=\0\tqwertyuiop[]\0\0asdfghjkl;'`\0\\zxcvbnm,./\0*\0 ";
+// scan_table_shifted :: "\0#!@#$%^&*()_+\0\0QWERTYUIOP{}\0\0ASDFGHJKL:\"~\0|ZXCVBNM<>?\0*\0 ";
 
 Key_Buffer :: Event_Buffer(Keyboard_Scan_Code);
 
@@ -118,9 +118,21 @@ Ps2_Controller_Cmd :: enum {
     WRITE_MOUSE_COMMAND :: 0xd4;
 }
 
+Mouse_Packet :: enum_flags {
+    LEFT_BTN;
+    RIGHT_BTN;
+    MIDDLE_BTN;
+    ONE;
+    X_SIGN;
+    Y_SIGN;
+    X_OVERFLOW;
+    Y_OVERFLOW;
+}
+
 #program_export
 ps2_mouse :: () #c_call {
     defer pic_end_of_interrupt(.PS2_MOUSE);
+    if !do_mouse return;
 
     for 0..1000 {
         status := port_read(Ps2_Port.STATUS);
@@ -139,6 +151,7 @@ ps2_mouse :: () #c_call {
 
     mouse.step += 1;
     if mouse.step != 3 return;
+
     mouse.step = 0;
 
     button_1 := (mouse.bytes[0] & 1) > 0;
@@ -153,12 +166,42 @@ ps2_mouse :: () #c_call {
         write_event_buffer(*mouse.buffer, cast(Mouse_Event) !button_2 + .BUTTON_2_PRESSED);
         mouse.button_2 = button_2;
     }
+
+    x_sign := (mouse.bytes[0] & 0x10) > 0;
+    y_sign := (mouse.bytes[0] & 0x20) > 0;
+
+    delta_x := cast(int) mouse.bytes[1];
+    delta_y := cast(int) mouse.bytes[2];
+
+    if x_sign delta_x |= 0xffffffff_ffffff00;
+    if y_sign delta_y |= 0xffffffff_ffffff00;
+
+    mouse.position_x += delta_x;
+    mouse.position_y -= delta_y;
 }
 
-do_mouse :: false;
+do_mouse :: true;
 
 enable_ps2 :: () {
     pic_enable_irq(.PS2_KEYBOARD);
+
+    layout := read_file(KEYBOARD_LAYOUT);
+
+    mouse.position_x = 800;
+    mouse.position_y = 800;
+
+    count: int;
+    for layout if it == #char "\n" {
+        count = it_index;
+        break;
+    }
+
+    scan_table.count = count;
+    scan_table.data = layout.data;
+
+    scan_table_shifted.count = count;
+    scan_table_shifted.data = layout.data + count + 1;
+
     #if !do_mouse return;
 
     mouse_wait(true);
@@ -200,6 +243,10 @@ enable_ps2 :: () {
     assert(port_read(Ps2_Port.DATA) == PS2_ACK);
 }
 
+scan_table: string;
+scan_table_shifted: string;
+
+// Why are we using scan code set 1? Is that just what some things happen to default to?
 Keyboard_Scan_Code :: enum u16 {
     NONE;
     ESC;
@@ -286,6 +333,7 @@ Keyboard_Scan_Code :: enum u16 {
     KEYPAD0;
     KEYPAD_PERIOD;
 
+    ISO_BACKSLASH :: 0x56; // Not on ansi keyboards
     F11 :: 0x57;
     F12;
 

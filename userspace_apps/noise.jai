@@ -26,5 +26,6 @@ main :: () {
                 return;
             }
         }
+        #asm { hlt; }
     }
 }
