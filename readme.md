@@ -1,10 +1,4 @@
 
-### Features
- - Play against a strong chess AI, written in Jai by DanielTan (thanks for letting me use it)
- - Custom file system which uses Apollo Time for created/modified time stamps
- - Custom executable format that supports typechecked parameters for programs using Jai type reflection (Type_Info)
- - Structured shell, programs communicate using typed / structured data, also using Type_Info
-
 ### Get it running
 
 You have to set USE_SIMD in Basic/Print.jai to false. I do not know why. You can make a copy of Basic in theos/modules so that you don't have to modifiy the module globally.
