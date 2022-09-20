@@ -38,6 +38,8 @@ files/noise
 files/text_editor
 files/wait
 files/copy_file
+files/assemble
+files/inspect_exe
 
 .#*
 
@@ -46,3 +48,4 @@ time
 script
 update
 test.jai
+files/code/x86_64.json

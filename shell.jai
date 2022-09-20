@@ -314,16 +314,12 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
     exe := read_file(name);
     defer unmap_memory(exe.count, xx exe.data);
     if !exe.count && parse_args.count == 0 {
-        for 0..filesystem_cache.master.root.directory_entry_count - 1 {
-            dir_entry := *filesystem_cache.root.entries[it];
+        entries := list_directory("");
 
-            other_name: string;
-            other_name.data = dir_entry.name.data;
-            other_name.count = c_style_strlen(dir_entry.name.data);
-
-            if String.begins_with_nocase(other_name, name) {
+        for entries {
+            if String.begins_with_nocase(it.name, name) {
                 shell.command_text.used = tokens[tokens.count - 2].start + 2;
-                write_to_text_viewer(*shell.command_text, other_name);
+                write_to_text_viewer(*shell.command_text, it.name);
                 write_to_text_viewer(*shell.command_text, " ");
                 update_syntax_highlighting();
                 break;
@@ -335,13 +331,13 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
     if !parse_args.count return;
     if !exe.count return;
 
-    header := cast(*Executable_Format_Header) exe.data;
+    header := cast(*Formosa_Exe_Header) exe.data;
 
     type_table: [] *Type_Info;
     type_table.count = header.input_parameter_count;
     type_table.data = xx header.type_table_virtual_address;
 
-    table_size := header.elf_offset - size_of(Executable_Format_Header);
+    table_size := header.elf_offset - size_of(Formosa_Exe_Header);
 
     memcpy(type_table.data, exe.data + header.type_table_offset, table_size);
 
@@ -397,7 +393,7 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
 }
 
 #scope_file
-args: [32] Any;
+args: [32] Any; // Whatever this is clean it up
 #scope_export
 
 shell_run_command :: (command_string: string) -> bool {
@@ -425,13 +421,13 @@ shell_run_command :: (command_string: string) -> bool {
             continue;
         }
 
-        header := cast(*Executable_Format_Header) exe.data;
+        header := cast(*Formosa_Exe_Header) exe.data;
 
         type_table: [] *Type_Info;
         type_table.count = header.input_parameter_count;
         type_table.data = xx 0xc_0000;
 
-        table_size := header.elf_offset - size_of(Executable_Format_Header);
+        table_size := header.elf_offset - size_of(Formosa_Exe_Header);
         memcpy(type_table.data, exe.data + header.type_table_offset, table_size);
 
         for * it.parameters {
@@ -619,7 +615,7 @@ Token :: struct {
     string_is_terminated: bool;
 
     Type :: enum {
-        NONE; IDENT; STRING; INT; COMMA; VERTICAL_BAR; EOT; ERROR;
+        NONE; IDENT; STRING; INT; COMMA; VERTICAL_BAR; POUND_SIGN; EOT; ERROR;
     }
 
     Value :: union {
@@ -673,6 +669,10 @@ tokenize_command :: (command: string) -> [..] Token {
 
           case #char "|";
             Emit(.VERTICAL_BAR);
+
+          case #char "#";
+            Emit(.EOT);
+            return result;
 
           case 0; #through;
           case EOT;

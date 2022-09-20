@@ -241,6 +241,8 @@ enable_ps2 :: () {
 
     mouse_wait(false);
     assert(port_read(Ps2_Port.DATA) == PS2_ACK);
+
+    input_key_buffer.read_index = input_key_buffer.write_index;
 }
 
 scan_table: string;

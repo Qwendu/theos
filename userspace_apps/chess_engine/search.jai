@@ -1237,7 +1237,7 @@ PVALUE :: #run -> [13] s16 {
 }
 
 ChessGame :: struct {
-  using chess: Chess;
+  using #as chess: Chess;
   nnue: [] NNUEdata;
   ply: int;
   maxply: int;

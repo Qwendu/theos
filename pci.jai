@@ -260,10 +260,10 @@ Mass_Storage_Device :: struct {
     sector_size :: 512;
     sector_count: int;
 
-    union {
+    // union {
         #as ide: Ide;
         #as ahci: Ahci;
-    }
+    // }
 
     Ide :: struct {
         device: Ide_Device_Type;
@@ -284,14 +284,14 @@ read_mass_storage :: (dev: *Mass_Storage_Device, buffer: *void, bytes: int, disk
     assert(dev.controller_type == .IDE);
     assert(dev.supports_busmastering);
 
-    ide_bus_master_transfer(dev, .READ, xx buffer, xx bytes, xx disk_address);
+    ide_dma_transfer(dev, .READ, xx buffer, xx bytes, xx disk_address);
 }
 
 write_mass_storage :: (dev: *Mass_Storage_Device, buffer: *void, bytes: int, disk_address: int) {
     assert(dev.controller_type == .IDE);
     assert(dev.supports_busmastering);
 
-    ide_bus_master_transfer(dev, .WRITE, xx buffer, xx bytes, xx disk_address);
+    ide_dma_transfer(dev, .WRITE, xx buffer, xx bytes, xx disk_address);
 }
 
 
@@ -319,6 +319,7 @@ discover_mass_storage_devices :: () {
             init_ahci_controller(info, *discovered);
         }
     }
+
     // pic_enable_irq(.PRIMARY_ATA);
 }
 
@@ -370,20 +371,15 @@ init_ide_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device
             status := cast(Ide_Status) ide_read(*new, .STATUS);
             if status == .NONE continue; // A clear status register indicates there is no device here
 
-            start := get_system_time();
-            while true {
+            Timeout(#code {
                 if status & .ERROR continue device_type; // Not ATA, may be ATAPI, but we don't support it yet
 
                 if !(status & .BUSY) && (status & .TRANSFER_REQUESTED) {
                     // Ready to transfer identification space in response to IDENTIFY
                     break;
                 }
-
-                elapsed := Basic.operator-(get_system_time(), start);
-                assert(Basic.to_milliseconds(elapsed) < 1000, "ATA 'identify' timeout");
-
                 status = xx ide_read(*new, .STATUS);
-            }
+            }, "ATA `IDENTIFY` timeout");
 
             id := identification_space;
             for 0..id.count - 1 {
@@ -426,11 +422,69 @@ Ide_Transfer_Direction :: enum {
     WRITE;
 }
 
-ide_bus_master_transfer_new :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, memory_address: *void, number_of_bytes: u64, disk_address: u64, call_site := #caller_location) {
-    
+ide_dma_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, physical: u64, sector_lba: u32, sector_count: int) {
+    using Ide_Register;
+    using Pci_Bus_Master_Port;
+
+    table: Physical_Region_Descriptor #align 8;
+    table.base = cast(u32) physical;
+    table.byte_count = 512 * cast(u16) sector_count;
+    table.end_of_table = .YES;
+
+    table_phys, present := get_physical_address(*table);
+    assert(present);
+    out(dev.bus_master_base + xx PRIMARY_PRD, cast(u32) table_phys);
+
+    Timeout(#code {
+        status := cast(Ide_Status) ide_read(dev, STATUS);
+        if !(status & .BUSY) break;
+    }, "ATA DMA busy timeout");
+
+    // Note figure out that drive select whatever https://gitlab.com/nakst/essence/-/blob/1eb2dfe5496e532c281b2fc0af7eb88e2534e180/drivers/ide.cpp#L93
+    ide_write(dev, DRIVE_SELECT, (cast(u8) sector_lba >> 24) | 0xe0);
+    ide_write(dev, SECTOR_COUNT, cast(u8) sector_count);
+    ide_write(dev, LBA_HIGH, cast(u8) (sector_lba >> 16));
+    ide_write(dev, LBA_MID,  cast(u8) (sector_lba >> 8));
+    ide_write(dev, LBA_LOW,  cast(u8) (sector_lba));
+
+    port_read(dev.bus_master_base + xx PRIMARY_STATUS);
+    ide_read(dev, STATUS);
+
+    direction_bit := cast(u8) ifx direction == .READ then 0x8 else 0;
+    out(dev.bus_master_base + xx PRIMARY_COMMAND, direction_bit);
+
+    Timeout(#code {
+        status := cast(Ide_Status) ide_read(dev, STATUS);
+        if status & .READY break;
+    }, "ATA DMA ready timeout");
+
+    if direction == .READ {
+        ide_write(dev, COMMAND, Ide_Command.READ_DMA);
+    } else if direction == .WRITE {
+        ide_write(dev, COMMAND, Ide_Command.WRITE_DMA);
+    } else assert(false);
+
+    Timeout(#code {
+        status := cast(Ide_Status) ide_read(dev, .STATUS);
+        assert(status & .ERROR == 0);
+        if status & .TRANSFER_REQUESTED break;
+    }, "ATA DMA transfer request timeout");
+
+    out(dev.bus_master_base + xx PRIMARY_COMMAND, direction_bit | 0x1);
+
+    Timeout(#code {
+        status := port_read(dev.bus_master_base + xx PRIMARY_STATUS);
+        active    := (status & 1 > 0);
+        interrupt := (status & 4 > 0);
+
+        if (!active && interrupt) {
+            port_write(dev.bus_master_base + xx PRIMARY_COMMAND, 0);
+            break;
+        }
+    }, "ATA DMA transfer timeout");
 }
 
-ide_bus_master_transfer :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, memory_address: *void, number_of_bytes: u64, disk_address: u64, call_site := #caller_location) {
+ide_dma_transfer :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, memory_address: *void, number_of_bytes: u64, disk_address: u64, call_site := #caller_location) {
     assert(cast(u64) memory_address % 0x200 == 0);
 
     assert(dev.controller_type == .IDE);
@@ -445,33 +499,29 @@ ide_bus_master_transfer :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_D
     if first_sector_count > sector_count first_sector_count = sector_count;
     sector_count -= first_sector_count;
 
-    ide_bus_master_transfer_sectors(dev, direction, target, cast(u32) lba, xx first_sector_count);
+    ide_dma_transfer_old(dev, direction, target, cast(u32) lba, xx first_sector_count);
     lba += first_sector_count;
     target += first_sector_count * 0x200;
 
     while sector_count > 128 {
-        ide_bus_master_transfer_sectors(dev, direction, target, cast(u32) lba, 128);
+        ide_dma_transfer_old(dev, direction, target, cast(u32) lba, 128);
         target += 0x10_000;
         lba += 128;
         sector_count -= 128;
     }
 
-    ide_bus_master_transfer_sectors(dev, direction, target, xx lba, xx sector_count);
+    ide_dma_transfer_old(dev, direction, target, xx lba, xx sector_count);
 }
 
-ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, physical: u64, sector_lba: u32, sector_count: int) {
+ide_dma_transfer_old :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, physical: u64, sector_lba: u32, sector_count: int) {
     using Ide_Register;
     using Pci_Bus_Master_Port;
     if !sector_count return;
 
-    start := get_system_time();
-    while true {
+    Timeout(#code {
         status := cast(Ide_Status) ide_read(dev, .STATUS);
         if !(status & .BUSY) break;
-
-        elapsed := Basic.operator-(get_system_time(), start);
-        assert(Basic.to_milliseconds(elapsed) < 1000, "ATA DMA read timeout");
-    }
+    }, "ATA DMA busy bit timeout");
 
     table: Physical_Region_Descriptor #align 8;
     table.base = cast(u32) physical;
@@ -506,24 +556,17 @@ ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Tr
         ide_write(dev, COMMAND, Ide_Command.WRITE_DMA);
     } else assert(false);
 
-    start = get_system_time();
-    while true {
+    Timeout(#code {
         status := cast(Ide_Status) ide_read(dev, .STATUS);
-
         if status & .ERROR assert(false);
-
-        if !(status & .BUSY) && (status & .TRANSFER_REQUESTED) {
-            break;
+        if !(status & .BUSY) {
+            if status & .TRANSFER_REQUESTED break;
         }
-
-        elapsed := Basic.operator-(get_system_time(), start);
-        assert(Basic.to_milliseconds(elapsed) < 1000, "ATA DMA read timeout");
-    }
+    }, "ATA DMA transfer request timeout");
 
     out(dev.bus_master_base + xx PRIMARY_COMMAND, direction_bit | 0x1);
 
-    start = get_system_time();
-    while true {
+    Timeout(#code {
         status := port_read(dev.bus_master_base + xx PRIMARY_STATUS);
         active    := (status & 1 > 0);
         interrupt := (status & 4 > 0);
@@ -532,10 +575,7 @@ ide_bus_master_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Tr
             port_write(dev.bus_master_base + xx PRIMARY_COMMAND, 0);
             break;
         }
-
-        elapsed := Basic.operator-(get_system_time(), start);
-        assert(Basic.to_milliseconds(elapsed) < 1000, "ATA DMA read timeout");
-    }
+    }, "ATA DMA transfer timeout");
 }
 
 #program_export

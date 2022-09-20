@@ -1,3 +1,4 @@
 
+set_theme gruvbox
 theos
 echo "If you don't make stuff, there is no stuff."

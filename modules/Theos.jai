@@ -204,7 +204,7 @@ create_window :: (width: int, height: int) -> *u32 {
     result: *u32;
     target := *result;
     #asm {
-        mov rbx: gpr === b, width;
+        mov rbx: gpr === di, width;
         mov rcx: gpr === c, height;
         mov rdx: gpr === d, target;
         mov rax: gpr === a, CREATE_WINDOW;

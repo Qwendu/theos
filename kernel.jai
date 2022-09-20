@@ -191,7 +191,6 @@ print_stack_trace :: (stack := context.stack_trace) {
             printf("   | %:% in ", filename, node.line_number);
             printf("%", node.info.name, color = theme.primary);
             print("()\n");
-
         }
         node = node.next;
     }
@@ -217,7 +216,7 @@ allocate_memory :: (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: 
 log :: (message: string, data: *void, info: Log_Info) {
     print(message);
     print("\n");
-    paint_screen();
+    // paint_screen();
 }
 
 assertion_failed :: (location: Source_Code_Location, message: string) {
@@ -496,11 +495,14 @@ gdt_init :: () {
 
     #asm {
         lgdt [gdtrp];
-        mov.w rax: gpr === a, 0x18;
+//        mov.w rax: gpr === a, 0x18;
     }
 
     #if ENABLE_IST {
-        #bytes .[ 0x0f, 0x00, 0xd8 ]; // ltr ax
+        #bytes .[
+            0x66, 0xb8, 0x18, 0x00, // mov ax, 0x18
+            0x0f, 0x00, 0xd8 // ltr ax
+        ];
     }
 }
 
@@ -1478,11 +1480,7 @@ reserve_physical_region :: (base: u64, limit: u64) {
     start_bit := base / 0x1000;
     end_bit := (base + limit) / 0x1000;
 
-    print("Start bit: "); print(cast(int) start_bit); print("\n");
-    print("End   bit: "); print(cast(int) end_bit); print("\n");
-
     for start_bit..end_bit - 1 {
-        print(cast(int) it); print(" ");
         assert(pm_bitmap[xx it] == false);
         set_bit(*pm_bitmap, xx it);
     }
@@ -1584,30 +1582,35 @@ release_page_frame :: (address: u64) {
 
 
 
-
-Executable_Format_Header :: struct {
-    magic: int;
-    input_parameter_count: int;
-    type_table_offset: int;
-    type_table_virtual_address: u64;
-    elf_offset: int;
-}
+#import "Formosa_Executable_Format";
 
 parameters_base_address: *void;
 
 load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
-    if file.count < size_of(Executable_Format_Header) {
+    if file.count < size_of(Formosa_Exe_Header) {
         printf("File is not an executable");
         return false;
     }
 
-    header := cast(*Executable_Format_Header) file.data;
-    if header.magic != 0xfeefeef00f00 {
+    header := cast(*Formosa_Exe_Header) file.data;
+
+    if header.magic != FORMOSA_EXE_MAGIC {
         printf("File is not an executable");
         return false;
     }
 
-    table_size := header.elf_offset - size_of(Executable_Format_Header);
+    if header.type != .ELF && header.type != .MINIMAL {
+        printf("Don't know how to run this type of executable: %\n", header.type);
+        return false;
+    }
+
+    if header.type == .MINIMAL {
+        minimal_base := header.minimal_header;
+        load_and_run_program_minimal(minimal_base);
+        return true;
+    }
+
+    table_size := header.elf_offset - size_of(Formosa_Exe_Header);
 
     type_table: [] *Type_Info;
     type_table.count = header.input_parameter_count;
@@ -1664,11 +1667,10 @@ load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
         }
     }
 
-    // Once task management works:
     // make_task(start_process, elf_base);
     // yield();
-
     start_process(elf_base);
+
     return true;
 }
 
@@ -1693,6 +1695,24 @@ start_process :: (elf: *void) {
         if header.p_type != PT_LOAD  continue;
         unmap_memory(xx header.p_memsz, header.p_vaddr);
     }
+}
+
+load_and_run_program_minimal :: (using minimal: *Minimal_Exe_Header) {
+    using Page_Flags;
+    flags := USER_SUPERVISOR | PRESENT | READ_WRITE;
+
+    data := map_memory(data_section_in_the_file.count, cast(u64) data_section_virtual_address, flags = flags);
+    code := map_memory(code_section_in_the_file.count, cast(u64) code_section_virtual_address, flags = flags);
+
+    memcpy(data, data_section_in_the_file.data, data_section_in_the_file.count);
+    memcpy(code, code_section_in_the_file.data, code_section_in_the_file.count);
+
+    entry := cast(u64) code;
+    entry_point := << cast(*() #no_context) *entry;
+    entry_point();
+
+    unmap_memory(data_section_in_the_file.count, cast(u64) data_section_virtual_address);
+    unmap_memory(code_section_in_the_file.count, cast(u64) code_section_virtual_address);
 }
 
 Syscall_Numbers :: enum {
@@ -1866,9 +1886,11 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         }
 
         else if data.rax == xx CREATE_WINDOW {
-            width := cast(int) data.rbx;
+            width := cast(int) data.rdi;
             height := cast(int) data.rcx;
             target := cast(**u32) data.rdx;
+
+            printf("Width: %, height: %\n", width, height);
 
             paint_screen();
             shadow: *Solid_Color = map_memory(size_of(Solid_Color));
@@ -2009,3 +2031,24 @@ HexMode :: () #expand {
     context.print_style.default_format_int.base = 16;
     `defer context.print_style.default_format_int.base = 10; //`
 }
+
+Timeout :: (code: Code, message := "", time := 1000) #expand {
+    start := get_system_time();
+    while true {
+        #insert code;
+        elapsed := Basic.operator-(get_system_time(), start);
+        assert(Basic.to_milliseconds(elapsed) < time, message);
+    }
+}
+
+#insert #run -> string {
+    result: string;
+    push_context .{} {
+        context.print_style.default_format_int.comma_string = "_";
+        context.print_style.default_format_int.digits_per_comma = 3;
+        for 0..63 {
+            result = String.join(result, Basic.tprint("BIT_% :: %;\n", it, cast(u64)1 <<  it));
+        }
+    }
+    return result;
+};

@@ -1937,7 +1937,8 @@ set_occ :: (index: int, bits_in_mask: u64, attack_mask: u64) -> u64 {
 
 bit_scan_forward :: (input: u64)->int #expand {
   result := -1;
-  #asm { bsf.q result, input; }
+  copy := input;
+  #asm { bsf.q result, copy; }
   return result;
 }
 

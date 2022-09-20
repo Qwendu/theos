@@ -7,10 +7,14 @@ _theos_start :: () #no_context {
     user_context: Context;
     user_context.allocator.proc = allocate_memory;
     user_context.logger = my_log;
+    user_context.assertion_failed = assertion_failed;
 
     push_context user_context {
     }
 }
+
+// The default versions of these routines make platform assumptions and it's nice to have them set up in the context when main is called
+// But at the moment it imports basic into all userspace programs... :/
 
 my_log :: (message: string, data: *void, info: Log_Info) {
     Theos :: #import "Theos";
@@ -31,6 +35,27 @@ allocate_memory :: (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: 
     }
 
     return Theos.map_memory(size);
+}
+
+assertion_failed :: (location: Source_Code_Location, message: string) {
+    Theos :: #import "Theos";
+    Basic :: #import "Basic";
+
+    Theos.write_string("\nAssertion failure!\n  -> ");
+    Theos.write_string(Basic.tprint("%", location.fully_pathed_filename));
+    Theos.write_string(":");
+    Theos.write_string(Basic.tprint("%", location.line_number));
+
+    if message.count {
+        Theos.write_string("\n     ");
+        Theos.write_string(message);
+    }
+    Theos.write_string("\n\n");
+    Theos.repaint();
+
+    while true {
+        #asm { hlt; }
+    }
 }
 
 END;
@@ -291,19 +316,11 @@ build_theos_app :: (name: string) {
         }
     }
 
-    Executable_Format_Header :: struct {
-        magic: int = 0xfeefeef00f00;
-        input_parameter_count: int;
-        type_table_offset: int;
-        type_table_virtual_address: u64;
-        elf_offset: int;
-    }
-
     write_string("\n=== Writing executable ===\n");
     {
-        header: Executable_Format_Header;
+        header: Formosa_Exe_Header;
         header.input_parameter_count = program_parameters.count;
-        header.type_table_offset = size_of(Executable_Format_Header);
+        header.type_table_offset = size_of(Formosa_Exe_Header);
         header.type_table_virtual_address = 0xc_0000;
 
         type_info_pointer_table := NewArray(header.input_parameter_count, u64);
@@ -368,13 +385,13 @@ build_theos_app :: (name: string) {
             // offset += align;
         }
 
-        header.elf_offset = size_of(Executable_Format_Header);
+        header.elf_offset = size_of(Formosa_Exe_Header);
         header.elf_offset += type_info_pointer_table.count * 8;
         header.elf_offset += builder_string_length(*type_table);
         header.elf_offset += 8 - (header.elf_offset % 8);
 
         file := file_open(tprint("files/%", name), true);
-        file_write(*file, *header, size_of(Executable_Format_Header));
+        file_write(*file, *header, size_of(Formosa_Exe_Header));
         file_write(*file, type_info_pointer_table.data, type_info_pointer_table.count * 8);
         file_write(*file, *type_table);
 
@@ -390,3 +407,5 @@ build_theos_app :: (name: string) {
 #import "File";
 #import "Basic";
 #import "String";
+
+#import "Formosa_Executable_Format";
