@@ -125,7 +125,7 @@ Instruction_Form :: struct {
 }
 
 Instruction_Operand :: struct {
-    type: Operand_Type;
+    type: Instruction_Operand_Type;
     input: bool;
     output: bool;
 }
@@ -252,10 +252,10 @@ compile_time_generate_instruction_table :: () {
         if inst.mnemonic.count >= 8 continue;
 
         operand: Instruction_Operand;
-        op_type: Operand_Type;
+        op_type: Instruction_Operand_Type;
 
         operand.type = .invalid_or_unsupported_vector;
-        ti := type_info(Operand_Type);
+        ti := type_info(Instruction_Operand_Type);
         op := it;
         for ti.names {
             name := it;
@@ -265,7 +265,7 @@ compile_time_generate_instruction_table :: () {
             }
 
             if name == op.type {
-                operand.type = cast(Operand_Type) ti.values[it_index];
+                operand.type = cast(Instruction_Operand_Type) ti.values[it_index];
                 break;
             }
         }
@@ -296,7 +296,7 @@ compile_time_generate_instruction_table :: () {
 
 #run compile_time_generate_instruction_table();
 
-Operand_Type :: enum u16 {
+Instruction_Operand_Type :: enum u16 {
     invalid_or_unsupported_vector; _1; _3; al; ax; eax; rax; cl; xmm0; rel8; rel32; imm4; imm8; imm16; imm32; imm64; r8; r16; r32; r64; mm; m; m8; m16; m32; m64;
 }
 
@@ -308,11 +308,28 @@ Register_Name :: enum {
     ah;  ch;  dh;  bh;
 }
 
+Memory :: struct {
+    bytes: int; // How many bytes to read at this address
+
+    used: enum_flags {
+        displacement;
+        base;
+        index;
+        scale;
+    }
+
+    displacement: int;
+    base: Register_Name;
+    index: Register_Name;
+    scale: int;
+}
+
 Typed_Value :: struct {
     type: Type;
     _string: string;
     _int: int;
     register: Register_Name;
+    memory: Memory;
 }
 
 Parser :: struct {
@@ -344,6 +361,9 @@ main :: (source_file: string, output_name: string) {
     source_code := cast(string) read_file(source_file);
 
     tokens := tokenize(source_code);
+    // write_string(tprint("Token count: %\n", tokens.count));
+    // output(tokens);
+    // return;
     statements := parse(tokens);
 
     encodings_blob = read_file("code/x64_enc");
@@ -358,14 +378,14 @@ main :: (source_file: string, output_name: string) {
 
     runtime_data_offset_cursor: int;
 
-    info := type_info(Register_Name);
-    for info.names {
-        register: Symbol_Table_Entry;
-        register.value.type = Register_Name;
-        register.value.register = cast(Register_Name) info.values[it_index];
-        register.runtime_data_offset = -1;
+    registers := type_info(Register_Name);
+    for registers.names {
+        r: Symbol_Table_Entry;
+        r.value.type = Register_Name;
+        r.value.register = cast(Register_Name) registers.values[it_index];
+        r.runtime_data_offset = -1;
 
-        table_add(*symbol_table, it, register);
+        table_add(*symbol_table, it, r);
     }
 
     for statements {
@@ -389,14 +409,18 @@ main :: (source_file: string, output_name: string) {
             assert(it.kind == .instruction);
             ast_inst := cast(*Ast_Instruction) it;
 
-            // Find a matching instruction mnemonic
+            node_operands: [..] Typed_Value;
+            defer array_free(node_operands);
+            for ast_inst.operands {
+                array_add(*node_operands, evaluate_expression(it, *symbol_table));
+            }
+
             for it: 0..enc_header.number_of_instructions - 1 {
                 inst := cast(*Instruction_Header) (encodings_blob.data + it * enc_header.instruction_stride + enc_header.instruction_header_offset);
                 if c_style_strlen(inst.mnemonic.data) != ast_inst.mnemonic.count continue;
 
                 if ast_inst.mnemonic != to_string(inst.mnemonic.data) continue;
 
-                // If we have a matching mnemonic, find a matching form
                 forms: [] Instruction_Form;
                 forms.data = cast(*Instruction_Form) (encodings_blob.data + inst.forms_offset + enc_header.instruction_form_offset);
                 forms.count = inst.number_of_forms;
@@ -407,11 +431,6 @@ main :: (source_file: string, output_name: string) {
                     form_operands: [] Instruction_Operand;
                     form_operands.data = cast(*Instruction_Operand) (encodings_blob.data + instruction_form.operands_offset + enc_header.instruction_operand_offset);
                     form_operands.count = instruction_form.number_of_operands;
-
-                    node_operands: [..] Typed_Value;
-                    for ast_inst.operands {
-                        array_add(*node_operands, evaluate_expression(it, *symbol_table));
-                    }
 
                     for 0..instruction_form.number_of_operands - 1 {
                         if !types_match(node_operands[it], form_operands[it].type) continue instruction_form;
@@ -475,7 +494,7 @@ main :: (source_file: string, output_name: string) {
     write_file(output_name, content);
 }
 
-types_match :: (value: Typed_Value, operand: Operand_Type) -> bool {
+types_match :: (value: Typed_Value, operand: Instruction_Operand_Type) -> bool {
     if value.type == int {
         if value._int == 0x80 && operand == .imm8  return true;
         if operand == .imm64 return true;
@@ -492,10 +511,18 @@ types_match :: (value: Typed_Value, operand: Operand_Type) -> bool {
         if r >= .al  && r <= .bh   && operand == .r8  return true;
     }
 
+    if value.type == Memory {
+        size := value.memory.bytes;
+        if size == 1 && operand == .m8  return true;
+        if size == 2 && operand == .m16 return true;
+        if size == 4 && operand == .m32 return true;
+        if size == 8 && operand == .m64 return true;
+    }
+
     return false;
 }
 
-evaluate_expression :: (expr: *Ast_Node, symbol_table: *Symbol_Table) -> Typed_Value {
+evaluate_expression :: (expr: *Ast_Node, st: *Symbol_Table, call := #caller_location) -> Typed_Value {
     if expr.kind == .literal {
         lit := cast(*Ast_Literal) expr;
         return lit.value;
@@ -503,47 +530,129 @@ evaluate_expression :: (expr: *Ast_Node, symbol_table: *Symbol_Table) -> Typed_V
 
     if expr.kind == .ident {
         ident := cast(*Ast_Ident) expr;
-        value, success := table_find(symbol_table, ident.name);
+        value, success := table_find(st, ident.name);
         assert(success);
         return value.value;
     }
 
     if expr.kind == .binary_operator {
         binop := cast(*Ast_Binary_Operator) expr;
-        assert(binop.operator_type == .dot || binop.operator_type == .minus, "Only dot and minus operators are implemented");
 
         if binop.operator_type == .dot {
-            lhs := evaluate_expression(binop.left, symbol_table);
+            lhs := evaluate_expression(binop.left, st);
             field_name := (cast(*Ast_Ident) binop.right).name;
             return get_field_of_typed_value(lhs, field_name);
         }
 
         if binop.operator_type == .minus {
-            lhs := evaluate_expression(binop.left, symbol_table);
-            rhs := evaluate_expression(binop.right, symbol_table);
+            lhs := evaluate_expression(binop.left, st);
+            rhs := evaluate_expression(binop.right, st);
             assert(lhs.type == int && rhs.type == int, "Minus only allowed on two integers");
 
             result: Typed_Value;
             result.type = int;
             result._int = lhs._int - rhs._int;
-            write_string(tprint("Result of subtraction was %\n", result._int));
             return result;
         }
+
+        if binop.operator_type == .divide {
+            lhs := evaluate_expression(binop.left, st);
+            rhs := evaluate_expression(binop.right, st);
+            assert(lhs.type == int && rhs.type == int, "Divide only allowed on two integers");
+
+            result: Typed_Value;
+            result.type = int;
+            result._int = lhs._int / rhs._int;
+            return result;
+        }
+
+        if binop.operator_type == .multiply {
+            lhs := evaluate_expression(binop.left, st);
+            rhs := evaluate_expression(binop.right, st);
+            assert(lhs.type == int && rhs.type == int, "Multiply only allowed on two integers");
+
+            result: Typed_Value;
+            result.type = int;
+            result._int = lhs._int * rhs._int;
+            return result;
+        }
+
+        if binop.operator_type == .plus {
+            lhs := evaluate_expression(binop.left, st);
+            rhs := evaluate_expression(binop.right, st);
+            assert(lhs.type == int && rhs.type == int, "Plus only allowed on two integers");
+
+            result: Typed_Value;
+            result.type = int;
+            result._int = lhs._int + rhs._int;
+            return result;
+        }
+
+        assert(false, "Weird operator type");
     }
 
-    if expr.kind == .directive {
-        directive := cast(*Ast_Directive) expr;
+    if expr.kind == .directive_memory {
+        directive := cast(*Ast_Directive_Memory) expr;
+        result: Typed_Value;
+        result.type = Memory;
+        result.memory = evaluate_indirect_addressing_expression(directive.expression, st);
+
+        if directive.size_expression_or_null {
+            bits := evaluate_expression(directive.size_expression_or_null, st);
+            assert(bits.type == int);
+            assert(bits._int % 8 == 0);
+            result.memory.bytes = bits._int / 8;
+        } else {
+            result.memory.bytes = 8; // I think in normal assemblers the default memory access size depends on the other instruction operands, or the instruction
+        }
+        return result;
+    }
+
+    if expr.kind == .directive_wildcard {
+        directive := cast(*Ast_Directive_Wildcard) expr;
         if directive.name == "code_offset" {
             result: Typed_Value;
             result.type = int;
             result._int = code.count + code_section_virtual_base;
             return result;
         }
-        else assert(false, "Did not recognize directive");
+
+        assert(false, "Did not recognize directive");
     }
 
     assert(false);
     return .{};
+}
+
+/*
+  Displacement
+  Base
+  Base + Index
+  Base + Displacement
+  Base + Index + Displacement
+  Base + (Index * Scale)
+  (Index * Scale) + Displacement
+  Base + (Index * Scale) + Displacement
+*/
+
+// There is no constant expression evaluation in a register-indirect addressing expression, but you can define constants outside of the expression and refer to them in here
+evaluate_indirect_addressing_expression :: (expr: *Ast_Node, st: *Symbol_Table) -> Memory {
+    memory: Memory;
+
+    // First should be a plus, multiply, integer, or register
+    if expr.kind == .ident {
+        ident := cast(*Ast_Ident) expr;
+        entry, success := table_find(st, ident.name);
+        assert(success);
+
+        if entry.value.type == Register_Name {
+            // Just a register means it's "base"
+            memory.base = entry.value.register;
+            memory.used = .base;
+        }
+    }
+
+    return memory;
 }
 
 get_field_of_typed_value :: (value: Typed_Value, field_name: string) -> Typed_Value {
@@ -562,7 +671,11 @@ get_field_of_typed_value :: (value: Typed_Value, field_name: string) -> Typed_Va
 }
 
 get_typed_value_runtime_size :: (value: Typed_Value) -> int {
-    if value.type == int return 8;
+    if value.type == int {
+        if value._int < 0xff return 1;
+        return 8;
+    }
+
     if value.type == string return value._string.count;
     assert(false, tprint("Could not determine runtime size of value %", value));
     return 0;
@@ -575,6 +688,7 @@ emit_instruction :: (code: *[..] u8, form: Instruction_Form, operands: [] Typed_
 
     if form.rex_required {
         rex: u8 = 0b0100_0000;
+
         for form.rex {
             if it == .set rex |= cast(u8) (0b1000 >> it_index);
             else if it >= .op_0 {
@@ -588,9 +702,22 @@ emit_instruction :: (code: *[..] u8, form: Instruction_Form, operands: [] Typed_
                     if high > 0 {
                         rex |= cast(u8) (0b1000 >> it_index);
                     }
-                } else {
-                    assert(false, "REX references memory operand, not yet implemented");
-                }
+                } else if op.type == Memory {
+                    // This is for the high bits of the base and index register's encoding numbers of a memory operand
+                    high: u8;
+                    if it_index == 2 { // REX.X
+                        high = register_encoding_number(op.memory.index) & 0b1000;
+                    } else if it_index == 3 { // REX.B
+                        high = register_encoding_number(op.memory.base) & 0b1000;
+                    } else {
+                        assert(false, "This rex bit should not refer to a memory operand I think");
+                    }
+
+                    // If that bit is high in the register number, set the corresponding bit in the rex bits
+                    if high > 0 {
+                        rex |= cast(u8) (0b1000 >> it_index);
+                    }
+                } else assert(false);
             }
         }
 
@@ -607,10 +734,17 @@ emit_instruction :: (code: *[..] u8, form: Instruction_Form, operands: [] Typed_
 
     if form.use_modrm {
         modrm: u8;
+
         if form.mod_rm.mode == -1 {
             modrm |= 0b1100_0000;
         } else {
-            assert(false, "ModR/M.mode references memory operand, not yet implemented");
+            op := operands[form.mod_rm.mode];
+            assert(op.type == Memory);
+            assert(op.memory.used == .base, "We only support one indirect addressing mode. It is [r64]");
+            // Write a value into the "modrm.mode" bits that selects the addressing mode to use. What addressing mode is the correct one with just a base register?
+
+            // Just do zero, I think it gives us base-only addressing modes for general purpose registers...
+            modrm |= 0;
         }
 
         if form.mod_rm.reg_is_operand_index {
@@ -620,7 +754,7 @@ emit_instruction :: (code: *[..] u8, form: Instruction_Form, operands: [] Typed_
                 rm := register_encoding_number(op.register);
                 modrm |= rm & 0b111;
             } else {
-                assert(false, "ModR/M.reg references memory operand, not yet implemented");
+                assert(false, "ModR/M.reg should only reference register operand I think");
             }
         } else {
             // Otherwise ModR/M.reg is just a literal value
@@ -632,7 +766,10 @@ emit_instruction :: (code: *[..] u8, form: Instruction_Form, operands: [] Typed_
             rm := register_encoding_number(op.register);
             modrm |= rm & 0b111;
         } else {
-            assert(false, "ModR/M.rm references memory operand, not yet implemented");
+            assert(op.type == Memory);
+            assert(op.memory.used == .base, "We only support one indirect addressing mode. It is [r64]");
+            // I think modrm.rm is the low three bits of the register encoding number of the base register. But I really have no clue
+            modrm |= register_encoding_number(op.memory.base) & 0b111;
         }
 
         array_add(code, modrm);
@@ -667,12 +804,14 @@ Ast_Node :: struct {
     kind: Kind;
 
     Kind :: enum {
+        invalid :: 0;
         instruction;
         declaration;
         literal;
         ident;
         binary_operator;
-        directive;
+        directive_memory;
+        directive_wildcard;
     }
 }
 
@@ -680,8 +819,8 @@ Ast_Instruction :: struct {
     using node: *Ast_Node;
     kind = .instruction;
 
-    mnemonic: string;       // In `mov a, 10` this is "mov"
-    operands: [] *Ast_Node; // In `mov a, 10` this is [a, 10]
+    mnemonic: string;
+    operands: [] *Ast_Node;
 }
 
 Ast_Declaration :: struct {
@@ -705,7 +844,6 @@ Ast_Ident :: struct {
     kind = .ident;
 
     name: string;
-    declaration: *Ast_Declaration; // Not yet implemented
 }
 
 Ast_Binary_Operator :: struct {
@@ -717,14 +855,25 @@ Ast_Binary_Operator :: struct {
     operator_type: enum {
         dot;
         minus;
+        plus;
+        multiply;
+        divide;
     }
 }
 
-Ast_Directive :: struct {
+Ast_Directive_Wildcard :: struct {
     using node: *Ast_Node;
-    kind = .directive;
+    kind = .directive_wildcard;
 
     name: string;
+}
+
+Ast_Directive_Memory :: struct {
+    using node: *Ast_Node;
+    kind = .directive_memory;
+
+    size_expression_or_null: *Ast_Node;
+    expression: *Ast_Node;
 }
 
 create_node :: ($Node: Type) -> *Node {
@@ -746,11 +895,10 @@ parse :: (input: [] Token) -> [] *Ast_Node {
     }
 
     return state.statements;
-}
+} @Formosa.EntryPoint
 
 parse_statement :: (using p: *Parser) {
     assert(consume(p, .ident));
-    id := current(p);
 
     if peek(p).kind == .doublecolon || peek(p).kind == .colonequals {
         array_add(*statements, parse_declaration(p));
@@ -773,25 +921,77 @@ parse_declaration :: (using p: *Parser) -> *Ast_Node {
 }
 
 parse_expression :: (using p: *Parser) -> *Ast_Node {
-    value := parse_factor(p);
-    if consume(p, .dot) {
-        other_value := parse_factor(p);
-        op := create_node(Ast_Binary_Operator);
-        op.left = value;
-        op.right = other_value;
-        op.operator_type = .dot;
+    result := parse_arithmetic(p);
+    // sym: Symbol_Table;
+    // write_string(tprint("The result of the expression was: %\n", evaluate_expression(result, *sym)._int));
+    return result;
+}
 
-        return cast(*Ast_Node) op;
+parse_arithmetic :: (using p: *Parser) -> *Ast_Node {
+    value := parse_product(p);
+
+    while peek(p).kind == .minus || peek(p).kind == .plus {
+        if consume(p, .minus) {
+            op := create_node(Ast_Binary_Operator);
+            op.left = value;
+            op.right = parse_product(p);
+            op.operator_type = .minus;
+
+            value = cast(*Ast_Node) op;
+        }
+
+        if consume(p, .plus) {
+            op := create_node(Ast_Binary_Operator);
+            op.left = value;
+            op.right = parse_product(p);
+            op.operator_type = .plus;
+
+            value = cast(*Ast_Node) op;
+        }
     }
 
-    if consume(p, .minus) {
-        other_value := parse_factor(p);
-        op := create_node(Ast_Binary_Operator);
-        op.left = value;
-        op.right = other_value;
-        op.operator_type = .minus;
+    return value;
+}
 
-        return cast(*Ast_Node) op;
+parse_product :: (using p: *Parser) -> *Ast_Node {
+    value := parse_dot(p);
+
+    while peek(p).kind == .asterisk || peek(p).kind == .slash {
+        if consume(p, .asterisk) {
+            op := create_node(Ast_Binary_Operator);
+            op.left = value;
+            op.right = parse_dot(p);
+            op.operator_type = .multiply;
+
+            value = cast(*Ast_Node) op;
+        }
+
+        if consume(p, .slash) {
+            op := create_node(Ast_Binary_Operator);
+            op.left = value;
+            op.right = parse_dot(p);
+            op.operator_type = .divide;
+
+            value = cast(*Ast_Node) op;
+        }
+    }
+
+    return value;
+
+}
+
+parse_dot :: (using p: *Parser) -> *Ast_Node {
+    value := parse_factor(p);
+
+    while peek(p).kind == .dot {
+        if consume(p, .dot) {
+            op := create_node(Ast_Binary_Operator);
+            op.left = value;
+            op.right = parse_factor(p);
+            op.operator_type = .dot;
+
+            value = cast(*Ast_Node) op;
+        }
     }
 
     return value;
@@ -820,11 +1020,26 @@ parse_factor :: (using p: *Parser) -> *Ast_Node {
 
     if consume(p, .pound_sign) {
         assert(consume(p, .ident));
-        directive := create_node(Ast_Directive);
-        directive.name = current(p)._string;
-        return cast(*Ast_Node) directive;
+        name := current(p)._string;
+
+        directive: *Ast_Node;
+        if name == {
+          case "memory";
+            memory := create_node(Ast_Directive_Memory);
+            if consume(p, .comma) {
+                memory.size_expression_or_null = parse_factor(p); // This can probably even be "parse_expression"
+            }
+            memory.expression = parse_expression(p);
+            return cast(*Ast_Node) memory;
+
+          case;
+            wild := create_node(Ast_Directive_Wildcard);
+            wild.name = name;
+            return cast(*Ast_Node) wild;
+        }
     }
 
+    write_string(tprint("%\n", current(p)));
     assert(false);
     return null;
 }
@@ -876,6 +1091,9 @@ Token_Kind :: enum {
     colonequals;
     dot;
     minus;
+    plus;
+    asterisk;
+    slash;
     comma;
     semicolon;
     pound_sign;
@@ -947,7 +1165,10 @@ tokenize :: (source: string) -> [] Token {
           case #char ","; Emit(.comma);
           case #char "."; Emit(.dot);
           case #char "-"; Emit(.minus);
+          case #char "+"; Emit(.plus);
           case #char ";"; Emit(.semicolon);
+          case #char "*"; Emit(.asterisk);
+          case #char "/"; Emit(.slash);
           case #char "#"; Emit(.pound_sign);
 
           case #char ":";
@@ -1019,7 +1240,10 @@ tokenize :: (source: string) -> [] Token {
                 Emit(.ident, _string = ident);
             }
 
-            else Emit(.error);
+            else {
+                Emit(.error);
+                assert(false);
+            }
         }
     }
 

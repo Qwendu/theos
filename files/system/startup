@@ -1,4 +1,4 @@
 
-set_theme gruvbox
-theos
-echo "If you don't make stuff, there is no stuff."
+assemble "code/welcome.asm", welcome
+inspect_exe welcome
+welcome

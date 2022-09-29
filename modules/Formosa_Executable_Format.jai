@@ -5,6 +5,9 @@ Formosa_Exe_Header :: struct {
     magic: u64 = FORMOSA_EXE_MAGIC;
     type: Formosa_Exe_Type;
 
+    // header_size: int; // The size of everything that isn't specific to the executable subtype
+    // entry_points: []~s64 Exe_Entry_Point;
+
     // Fix this nonsense
     input_parameter_count: int;
     type_table_offset: int;
@@ -33,4 +36,9 @@ Minimal_Exe_Header :: struct {
     data_section_virtual_address: *void;
     code_section_virtual_address: *void;
     zero_section_virtual_address: *void;
+}
+
+Exe_Entry_Point :: struct {
+    name: string~s64;
+    virtual_address: *void;
 }

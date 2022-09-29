@@ -208,6 +208,10 @@ allocate_memory :: (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: 
         if size < old_size || size < 4096 {
             return old_buffer;
         }
+
+        new := map_memory(size);
+        memcpy(new, old_buffer, old_size);
+        return new;
     }
 
     return map_memory(size);
