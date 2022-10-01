@@ -1,4 +1,0 @@
-
-assemble "code/welcome.asm", welcome
-inspect_exe welcome
-welcome

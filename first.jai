@@ -2,6 +2,7 @@
 #import "Nasm";
 #import "Elf";
 #import "Theos_Filesystem";
+#import "Linker_Script";
 
 #load "config.jai";
 #load "build_theos_app.jai";
@@ -169,7 +170,17 @@ interrupt_handlers: [] struct {
             options.dead_code_elimination = .MODULES_ONLY;
 
             options.backend = .LLVM;
-            options.additional_linker_arguments = .["-T", "link.ld"];
+
+            base :: 0xffffffff80100000;
+            script: Linker_Script;
+            script.entry_point_name = "kernel_entry";
+            script.sections = .[
+                .{ base, "text" },
+                .{ base, "rodata" },
+                .{ base, "data" },
+                .{ base, "bass" },
+            ];
+            set_linker_script(*options, w, script);
 
             // Don't know if these do anything
             // options.llvm_options.target_system_triple = "x86_64-unknown-none-elf";

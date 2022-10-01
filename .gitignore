@@ -49,3 +49,4 @@ script
 update
 test.jai
 files/code/x86_64.json
+/modules/.build/*

@@ -1659,7 +1659,8 @@ load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
         if header.p_type != PT_LOAD  continue;
 
         flags := USER_SUPERVISOR | PRESENT | READ_WRITE;
-        map_memory(xx header.p_memsz, header.p_vaddr, flags = flags);
+        offset := (header.p_vaddr % 0x1000);
+        map_memory(cast(int) (header.p_memsz + offset), header.p_vaddr - offset, flags = flags);
         target := cast(*u8) header.p_vaddr;
 
         for 0..header.p_filesz-1 {

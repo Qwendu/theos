@@ -2,12 +2,10 @@
 /*
 
 Long list of things that need to be filled out because it is getting out of control
- - Recursive expressions
  - More immediate sizes and for any value, choose the required immediate size based on the size of the immediate
- - The rest of the operand types in general
  - The rest of the instructions
- - Recursive expressions rather than just one level deep
- - Unary minus and other operators
+ - Addressing modes
+ - Unary minus
  - Handle errors
  - Handle escape characters in strings
  - Reference declarations that are later in the file (Keep looping until everything is resolved)
@@ -490,8 +488,10 @@ main :: (source_file: string, output_name: string) {
     content.count = file_size;
     content.data = file;
 
-    create_file(output_name);
-    write_file(output_name, content);
+    if output_name.count {
+        create_file(output_name);
+        write_file(output_name, content);
+    }
 }
 
 types_match :: (value: Typed_Value, operand: Instruction_Operand_Type) -> bool {
@@ -816,7 +816,7 @@ Ast_Node :: struct {
 }
 
 Ast_Instruction :: struct {
-    using node: *Ast_Node;
+    using node: Ast_Node;
     kind = .instruction;
 
     mnemonic: string;
@@ -824,7 +824,7 @@ Ast_Instruction :: struct {
 }
 
 Ast_Declaration :: struct {
-    using node: *Ast_Node;
+    using node: Ast_Node;
     kind = .declaration;
 
     name: string;
@@ -833,21 +833,21 @@ Ast_Declaration :: struct {
 }
 
 Ast_Literal :: struct {
-    using node: *Ast_Node;
+    using node: Ast_Node;
     kind = .literal;
 
     value: Typed_Value;
 }
 
 Ast_Ident :: struct {
-    using node: *Ast_Node;
+    using node: Ast_Node;
     kind = .ident;
 
     name: string;
 }
 
 Ast_Binary_Operator :: struct {
-    using node: *Ast_Node;
+    using node: Ast_Node;
     kind = .binary_operator;
 
     left: *Ast_Node;
@@ -862,14 +862,14 @@ Ast_Binary_Operator :: struct {
 }
 
 Ast_Directive_Wildcard :: struct {
-    using node: *Ast_Node;
+    using node: Ast_Node;
     kind = .directive_wildcard;
 
     name: string;
 }
 
 Ast_Directive_Memory :: struct {
-    using node: *Ast_Node;
+    using node: Ast_Node;
     kind = .directive_memory;
 
     size_expression_or_null: *Ast_Node;
@@ -890,8 +890,8 @@ parse :: (input: [] Token) -> [] *Ast_Node {
     array_reset(*state.statements);
 
     while true {
-        parse_statement(*state);
         if consume(*state, .eot) break;
+        parse_statement(*state);
     }
 
     return state.statements;
