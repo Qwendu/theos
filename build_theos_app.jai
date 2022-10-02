@@ -13,9 +13,6 @@ _theos_start :: () #no_context {
     }
 }
 
-// The default versions of these routines make platform assumptions and it's nice to have them set up in the context when main is called
-// But at the moment it imports basic into all userspace programs... :/
-
 my_log :: (message: string, data: *void, info: Log_Info) {
     Theos :: #import "Theos";
     Theos.write_string(message);
@@ -43,12 +40,12 @@ allocate_memory :: (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: 
 
 assertion_failed :: (location: Source_Code_Location, message: string) {
     Theos :: #import "Theos";
-    Basic :: #import "Basic";
+    #import "Theos_Utilities";
 
     Theos.write_string("\nAssertion failure!\n  -> ");
-    Theos.write_string(Basic.tprint("%", location.fully_pathed_filename));
+    Theos.write_string(location.fully_pathed_filename);
     Theos.write_string(":");
-    Theos.write_string(Basic.tprint("%", location.line_number));
+    write_int(location.line_number);
 
     if message.count {
         Theos.write_string("\n     ");

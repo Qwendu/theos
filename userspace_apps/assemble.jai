@@ -8,7 +8,8 @@ Long list of things that need to be filled out because it is getting out of cont
  - Unary minus
  - Handle errors
  - Handle escape characters in strings
- - Reference declarations that are later in the file (Keep looping until everything is resolved)
+ - Order independent declarations
+ - Escape bytes / multibyte opcodes
 
 */
 
@@ -488,10 +489,8 @@ main :: (source_file: string, output_name: string) {
     content.count = file_size;
     content.data = file;
 
-    if output_name.count {
-        create_file(output_name);
-        write_file(output_name, content);
-    }
+    create_file(output_name);
+    write_file(output_name, content);
 }
 
 types_match :: (value: Typed_Value, operand: Instruction_Operand_Type) -> bool {

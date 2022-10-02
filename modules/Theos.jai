@@ -1,5 +1,5 @@
 
-// This is the theos system API. Kind of like #include "windows.h", but even leaner and meaner
+// This is the theos system API, kind of like #include "windows.h"
 
 #scope_export
 
@@ -32,7 +32,6 @@ System_Params :: struct {
 
     physical_memory: int;
     used_physical_memory: int;
-    // Add more stuff if it comes up, so that we don't need a million syscalls for stuff
 }
 
 get_system_parameters :: (params: *System_Params) {

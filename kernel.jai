@@ -1660,7 +1660,7 @@ load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
 
         flags := USER_SUPERVISOR | PRESENT | READ_WRITE;
         offset := (header.p_vaddr % 0x1000);
-        map_memory(cast(int) (header.p_memsz + offset), header.p_vaddr - offset, flags = flags);
+        map_memory(cast(int) (header.p_memsz), header.p_vaddr, flags = flags);
         target := cast(*u8) header.p_vaddr;
 
         for 0..header.p_filesz-1 {

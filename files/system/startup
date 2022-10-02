@@ -1,0 +1,4 @@
+
+theos
+assemble "code/welcome.asm", welcome
+
