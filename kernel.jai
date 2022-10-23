@@ -2,6 +2,8 @@
 Basic  :: #import "Basic";
 String :: #import "String";
 
+// Window_Type :: #import "Window_Type";
+
 #import "Machine_X64";
 #import "Elf";
 #import "Theos_Filesystem";
@@ -103,11 +105,9 @@ kernel_entry :: () {
         acpi_init();
         hpet_init();
 
-        initialize_task_manager();
-
         pci_scan_all_devices();
         discover_mass_storage_devices();
-        assert(disks.count == 1);
+        assert(disks.count == 1, "You are having too much fun");
         boot_drive = *disks[0];
         // shutdown_emulator();
 
@@ -151,6 +151,8 @@ kernel_entry :: () {
         init_graphics(*boot_data);
         init_shell(font);
 
+        initialize_task_manager();
+
         startup := read_file("system/startup");
         commands := String.split(cast(string) startup, "\n");
         for commands shell_run_command(it);
@@ -162,10 +164,11 @@ kernel_entry :: () {
             #asm {
                 hlt;
             }
-
             handle_keyboard_events();
             update_shell();
             move_mouse(mouse.position_x / 2, mouse.position_y / 2);
+
+            // yield();
         }
     }
 }
@@ -480,7 +483,7 @@ gdt_init :: () {
         base: u64 #align 2;
     }
 
-    gdtr.limit = 0x28;
+    gdtr.limit = 0x20;
     gdtr.base = xx gdt.data;
 
     gdtrp := *gdtr;
@@ -494,12 +497,12 @@ gdt_init :: () {
         tss.ist[5] = KERNEL_BASE + 0x400_000 - 0x5000;
         tss.ist[6] = KERNEL_BASE + 0x400_000 - 0x6000;
 
+        gdtr.limit += 0x8;
         tss.iobp = size_of(Task_State_Segment);
     }
 
     #asm {
         lgdt [gdtrp];
-//        mov.w rax: gpr === a, 0x18;
     }
 
     #if ENABLE_IST {
@@ -940,7 +943,7 @@ get_system_time :: () -> Basic.Apollo_Time {
 
     elapsed: Apollo_Time;
     elapsed.low = ticks;
-    elapsed *= cast(s64) hpet.base_period;
+    elapsed *= cast(s64) hpet.base_period_femtoseconds;
 
     return elapsed + boot_time;
 }
@@ -1133,7 +1136,7 @@ read :: (reg: Hpet_Register) -> u64 {
 }
 
 hpet: struct {
-    base_period: u64; // Femtoseconds
+    base_period_femtoseconds: u64;
     base_address: *void;
 }
 
@@ -1149,8 +1152,8 @@ hpet_init :: () {
     hpet.base_address = xx (virt + offset_in_page);
 
     capabilities := read(Hpet_Register.CAPABILITIES);
-    hpet.base_period = capabilities >> 32;
-    assert(hpet.base_period > 0 && hpet.base_period < 100_000_000);
+    hpet.base_period_femtoseconds = capabilities >> 32;
+    assert(hpet.base_period_femtoseconds > 0 && hpet.base_period_femtoseconds < 100_000_000);
 
     write(Hpet_Register.COUNTER, 0);
 
@@ -1443,22 +1446,24 @@ page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
         paint_screen();
 
         #if PAGE_FAULT_STACK_TRACE {
-            print("\nStack trace:\n");
-            node := current_task.the_context.stack_trace;
-            while node {
-                if node.info != null {
-                    print("In file \"");
-                    print(node.info.location.fully_pathed_filename);
-                    print("\" -> in proc \"");
-                    print(node.info.name);
-                    print("\" on line ");
-                    print(node.line_number);
-                    print("\n");
+            if current_task && current_task.the_context {
+                print("\nStack trace:\n");
+                node := current_task.the_context.stack_trace;
+                while node {
+                    if node.info != null {
+                        print("In file \"");
+                        print(node.info.location.fully_pathed_filename);
+                        print("\" -> in proc \"");
+                        print(node.info.name);
+                        print("\" on line ");
+                        print(node.line_number);
+                        print("\n");
+                    }
+
+                    node = node.next;
                 }
-    
-                node = node.next;
+                paint_screen();
             }
-            paint_screen();
         }
     }
 
@@ -1610,7 +1615,9 @@ load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
 
     if header.type == .MINIMAL {
         minimal_base := header.minimal_header;
-        load_and_run_program_minimal(minimal_base);
+
+        make_task(start_process_minimal, minimal_base);
+        yield();
         return true;
     }
 
@@ -1672,14 +1679,14 @@ load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
         }
     }
 
-    // make_task(start_process, elf_base);
-    // yield();
-    start_process(elf_base);
+    make_task(start_process_elf, elf_base);
+    yield();
+    // start_process_elf(elf_base);
 
     return true;
 }
 
-start_process :: (elf: *void) {
+start_process_elf :: (elf: *void) {
     elf_header := cast(*Elf64_Ehdr) elf;
 
     tls := map_memory(0x4000);
@@ -1687,9 +1694,12 @@ start_process :: (elf: *void) {
         wrfsbase tls;
     }
 
+    shell.foreground_task = current_task;
+
     entry_point := << cast(*() #no_context) *elf_header.e_entry;
     entry_point();
 
+    shell.foreground_task = null;
     unmap_memory(0x4000, xx tls);
 
     for 0..elf_header.e_phnum - 1 {
@@ -1702,7 +1712,8 @@ start_process :: (elf: *void) {
     }
 }
 
-load_and_run_program_minimal :: (using minimal: *Minimal_Exe_Header) {
+start_process_minimal :: (header: *void) {
+    using minimal: *Minimal_Exe_Header = xx header;
     using Page_Flags;
     flags := USER_SUPERVISOR | PRESENT | READ_WRITE;
 
@@ -1875,6 +1886,10 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             result := cast(*Message) data.rbx;
             result.kind = .NONE;
 
+            // What the fuck.
+            // #asm { sti; }
+            // yield();
+            // #asm { cli; }
             scan_code := read_key_buffer(*input_key_buffer);
 
             if scan_code != .NONE {
@@ -2030,6 +2045,13 @@ dont :: () #expand {
         cli;
         hlt;
     }
+}
+
+LongForm :: () #expand {
+    old := context.print_style.default_format_struct;
+    `defer context.print_style.default_format_struct = old; //`
+    context.print_style.default_format_struct.use_newlines_if_long_form = true;
+    context.print_style.default_format_struct.use_long_form_if_more_than_this_many_members = 2;
 }
 
 HexMode :: () #expand {

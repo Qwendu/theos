@@ -75,9 +75,9 @@ File_Header :: struct {
     form_stride: s16;
     operand_stride: s16;
 
-    instruction_header_offset: int; // Offset of the instruction header array from the beginning of the file
-    instruction_form_offset: int; // Offset of the instruction form array from the beginning of the file
-    instruction_operand_offset: int; // Offset of the instruction operand array from the beginning of the file
+    instruction_header_offset: int;
+    instruction_form_offset: int;
+    instruction_operand_offset: int;
 }
 
 Instruction_Header :: struct {
@@ -112,7 +112,6 @@ Instruction_Form :: struct {
     opcode: u8;
     addend: s8; // -1 means no addend
 
-    // The immediate byte
     immediate_size: u8;
     immediate_value: u8;
 
@@ -154,10 +153,7 @@ compile_time_generate_instruction_table :: () {
 
     builder: String_Builder;
 
-    // Parse the instruction encoding information from the JSON layout into our binary representation
-
     instruction_header_offset := size_of(File_Header);
-    // Write all of the instruction headers (1 for each mnemonic)
     for table.instructions {
         if it.mnemonic.count >= 8 continue;
 
@@ -173,7 +169,6 @@ compile_time_generate_instruction_table :: () {
 
     instruction_form_offset := builder_string_length(*builder) + size_of(File_Header);
 
-    // Write each of the instruction forms for each of the mnemonics
     for inst: table.instructions {
         if inst.mnemonic.count >= 8 continue;
         for inst.forms {
@@ -200,7 +195,6 @@ compile_time_generate_instruction_table :: () {
 
             form.use_modrm = enc.ModRM.mode.count && enc.ModRM.rm.count && enc.ModRM.reg.count;
             if form.use_modrm {
-                // Parse modrm
                 if enc.ModRM.mode == "11" form.mod_rm.mode = -1;
                 else {
                     reference := eat_pound(enc.ModRM.mode);
@@ -308,7 +302,7 @@ Register_Name :: enum {
 }
 
 Memory :: struct {
-    bytes: int; // How many bytes to read at this address
+    bytes: int;
 
     used: enum_flags {
         displacement;
@@ -634,18 +628,15 @@ evaluate_expression :: (expr: *Ast_Node, st: *Symbol_Table, call := #caller_loca
   Base + (Index * Scale) + Displacement
 */
 
-// There is no constant expression evaluation in a register-indirect addressing expression, but you can define constants outside of the expression and refer to them in here
 evaluate_indirect_addressing_expression :: (expr: *Ast_Node, st: *Symbol_Table) -> Memory {
     memory: Memory;
 
-    // First should be a plus, multiply, integer, or register
     if expr.kind == .ident {
         ident := cast(*Ast_Ident) expr;
         entry, success := table_find(st, ident.name);
         assert(success);
 
         if entry.value.type == Register_Name {
-            // Just a register means it's "base"
             memory.base = entry.value.register;
             memory.used = .base;
         }
@@ -740,9 +731,7 @@ emit_instruction :: (code: *[..] u8, form: Instruction_Form, operands: [] Typed_
             op := operands[form.mod_rm.mode];
             assert(op.type == Memory);
             assert(op.memory.used == .base, "We only support one indirect addressing mode. It is [r64]");
-            // Write a value into the "modrm.mode" bits that selects the addressing mode to use. What addressing mode is the correct one with just a base register?
 
-            // Just do zero, I think it gives us base-only addressing modes for general purpose registers...
             modrm |= 0;
         }
 
@@ -767,7 +756,6 @@ emit_instruction :: (code: *[..] u8, form: Instruction_Form, operands: [] Typed_
         } else {
             assert(op.type == Memory);
             assert(op.memory.used == .base, "We only support one indirect addressing mode. It is [r64]");
-            // I think modrm.rm is the low three bits of the register encoding number of the base register. But I really have no clue
             modrm |= register_encoding_number(op.memory.base) & 0b111;
         }
 

@@ -37,7 +37,7 @@ Player_Kind :: enum {
 }
 
 main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
-    write_string("Loading neural network...\n");
+    write_string("This program will fail. (redzone in the c library)\n");
     repaint();
     nn := read_file("chess_res/nn-04cf2b4ed1da.nnue");
     defer unmap_memory(nn.count, nn.data);

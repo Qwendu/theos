@@ -1,10 +1,23 @@
 
 Task_Info :: struct {
-    rsp: u64;
+    rsp: *void;
     next: *Task_Info;
+
+    stack_bottom: *void;
+    stack_size: int;
+
     startup_data: *void;
     entry: (data: *void);
     the_context: *Context;
+
+    state: enum {
+        INVALID;
+        AWAKE;
+        WAITING_FOR_EVENT;
+        SLEEPING;
+    };
+
+    input: Event_Buffer(Keyboard_Scan_Code); // Should probably not be associated with a task but with a process or whatever
 }
 
 current_task: *Task_Info;
@@ -16,11 +29,13 @@ initialize_task_manager :: () {
     idt_add_handler(xx task_switch, 0x40);
     task.next = task;
     task.the_context = *context;
+    task.state = .AWAKE;
     current_task = task;
 }
 
 switch_to_task :: (new: *Task_Info) {
     current := *current_task;
+
     #asm {
         mov rbx: gpr === b, new;
         mov rax: gpr === a, current;
@@ -41,36 +56,43 @@ new_task_start :: () #no_context {
     }
 }
 
-make_task :: (entry_point: (data: *void), startup_data: *void = null) -> *Task_Info {
+make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size := 0x1_0000) -> *Task_Info {
     task := cast(*Task_Info) map_memory(size_of(Task_Info));
 
-    kernel_stack := map_memory(0x1000);
-    stack := cast(*Interrupt_Stack_Frame) (kernel_stack + 0x1000) - 1;
+    task.stack_bottom = map_memory(stack_size) + stack_size;
+    task.stack_size   = stack_size;
 
+    stack := cast(*Interrupt_Stack_Frame) task.stack_bottom - 1;
     stack.ip = cast(u64) cast(*void) new_task_start;
     stack.flags = 0x200;
-
     stack.cs = 0x08;
     stack.ss = 0x10;
-    stack.sp = xx kernel_stack;
-
+    stack.sp = xx task.stack_bottom;
     task.rsp = xx stack;
+
     task.next = current_task.next;
     current_task.next = task;
 
     task.entry = entry_point;
     task.startup_data = startup_data;
+    task.state = .AWAKE;
 
     return task;
 }
 
 yield :: () {
-    switch_to_task(current_task.next);
+    new := current_task.next;
+    while new.state != .AWAKE {
+        new = new.next;
+        if new == current_task.next #asm { hlt; }
+    }
+    switch_to_task(new);
 }
 
-exit :: () {
+exit :: (call_site := #caller_location) {
     task := current_task;
     while true {
+        assert(task != null);
         if task.next == current_task {
             task.next = task.next.next;
             break;
@@ -78,6 +100,10 @@ exit :: () {
         task = task.next;
         assert(task != current_task);
     }
+
+    stack_top := current_task.stack_bottom - current_task.stack_size;
+    unmap_memory(current_task.stack_size, cast(u64) stack_top);
+
     yield();
 }
 

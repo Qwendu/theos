@@ -15,6 +15,7 @@ Syscall_Numbers :: enum {
     GET_MESSAGE      :: 0x08;
     CREATE_WINDOW    :: 0x09;
     CLOSE_WINDOW     :: 0x0a;
+    GET_WINDOW_WRITE_POINTER :: 0x14;
     REPAINT          :: 0x0b;
     GET_THEME        :: 0x0c;
     SET_THEME        :: 0x0d;
@@ -25,6 +26,8 @@ Syscall_Numbers :: enum {
     GET_TIME         :: 0x12;
     GET_SYSTEM_PARAMETERS  :: 0x13;
 }
+
+Window_Handle :: s64;
 
 System_Params :: struct {
     x_resolution: int;

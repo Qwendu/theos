@@ -273,7 +273,7 @@ Mass_Storage_Device :: struct {
     }
 
     Ahci :: struct {
-        command_list: *Ahci_Command_Table;
+        command_list: [] Ahci_Command_Header;
         received_fis: *Ahci_Received_Fis;
     }
 }
@@ -808,18 +808,18 @@ init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Devic
         // Allocate received FIS and command list for this port
         dev: Mass_Storage_Device.Ahci;
 
-        list_size := size_of(Ahci_Command_Header) * command_slot_count;
-        dev.command_list == map_memory(list_size, flags = uncacheable_flags);
-        dev.received_fis == map_memory(size_of(Ahci_Received_Fis), flags = uncacheable_flags);
+        dev.command_list.data = map_memory(size_of(Ahci_Command_Header) * command_slot_count, flags = uncacheable_flags);
+        dev.command_list.count = command_slot_count;
+        dev.received_fis = map_memory(size_of(Ahci_Received_Fis), flags = uncacheable_flags);
 
-        port.command_list_base = get_physical_address(dev.command_list);
+        port.command_list_base = get_physical_address(dev.command_list.data);
         port.fis_base = get_physical_address(dev.received_fis);
 
         table_region: *Ahci_Command_Table = map_memory(size_of(Ahci_Command_Table) * command_slot_count);
         assert(xx table_region % 128 == 0);
 
         for 0..command_slot_count - 1 {
-            header := cast(*Ahci_Command_Header) dev.command_list + it;
+            header := *dev.command_list[it];
             header.command_table_base = xx (table_region + it);
         }
 
@@ -831,7 +831,7 @@ init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Devic
         fis.command = xx Ide_Command.IDENTIFY;
         fis.flags = .IS_COMMAND;
 
-        dev.command_list[0].fis = fis;
+        table_region[0].fis = fis;
 
         assert(port.command_issue & 0x1 == 0);
         port.command_issue |= 0x1;

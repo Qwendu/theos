@@ -66,7 +66,7 @@ Nasm_Options :: struct {
     errors_to_stdout: bool;
 }
 
-run_nasm :: (options: Nasm_Options) -> bool, int, string, string {
+run_nasm :: (options: Nasm_Options) -> Process_Result, string, string {
     cmd: [..] string;
     array_add(*cmd, "nasm");
 
@@ -150,8 +150,8 @@ run_nasm :: (options: Nasm_Options) -> bool, int, string, string {
         }
     }
 
-    success, error_code, stdout, stderr := os_run_command(.. cmd, capture_and_return_output = true);
-    return success, error_code, stdout, stderr;
+    result, stdout, stderr := run_command(.. cmd, capture_and_return_output = true);
+    return result, stdout, stderr;
 }
 
 Nasm_Format :: enum {

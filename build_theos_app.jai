@@ -72,13 +72,15 @@ build_theos_app :: (name: string) {
     program_parameters: [..] *Code_Declaration;
     print("\n=== Compiling User Application \"%\" ===\n", name);
     {
-        w := compiler_create_workspace("User Application");
+        w := compiler_create_workspace("Formosa User Application");
         options := get_build_options(w);
         options.output_executable_name = name;
         options.intermediate_path = ".build/";
         options.output_path = ".build/userspace_apps/";
         options.output_type = .EXECUTABLE;
         options.entry_point_name = "_theos_start";
+
+        #if !ENABLE_IST options.disable_redzone = true;
 
         options.stack_trace = false;
         options.array_bounds_check = .OFF;
@@ -191,7 +193,7 @@ build_theos_app :: (name: string) {
     assert(success);
 
     objdump_command := tprint("objdump -x .build/userspace_apps/% -d -M intel --source", name);
-    yes, error_code, stdout, stderr := shell(objdump_command, false);
+    yes, error_code, stdout, stderr := shell(objdump_command, print_output = false);
     if !yes || error_code != 0 {
         write_string("objdump failed to run! (continuing)\n");
     }

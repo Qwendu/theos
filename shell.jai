@@ -3,7 +3,15 @@ handle_keyboard_events :: () {
     while true {
         scan_code := read_key_buffer(*input_key_buffer);
         if scan_code == .NONE return;
-        write_key_buffer(*shell.key_buffer, scan_code);
+
+        if false && shell.foreground_task != null {
+        //  write_key_buffer(*shell.foreground_task.input, scan_code);
+        //  if shell.foreground_task.state == .WAITING_FOR_EVENT {
+        //      shell.foreground_task.state = .AWAKE;
+        //  }
+        } else {
+            write_key_buffer(*shell.key_buffer, scan_code);
+        }
     }
 }
 
@@ -35,6 +43,8 @@ Shell :: struct {
 
     history: [..] string;
     history_index: int;
+
+    foreground_task: *Task_Info;
 }
 
 shell: Shell;

@@ -48,13 +48,13 @@ interrupt_handlers: [] struct {
     .{ "page_fault_handler", 0x0e },
 ];
 
-
+#import "POSIX";
 
 #run {
+    write_string("\n=== Theos Build Begin ===\n");
+
     set_build_options_dc(.{do_output = false});
     user_args, compiler_args := get_build_options().compile_time_command_line;
-
-    write_string("STARTING COMPILE\n");
 
     make_iso: bool;
     make_vdi: bool;
@@ -94,6 +94,14 @@ interrupt_handlers: [] struct {
         return;
     }
 
+    version_info: Version_Info;
+    compiler_get_version_info(*version_info);
+    if memcmp(*version_info, *Version_Info.{0, 1, 38}, size_of(Version_Info)) != 0 {
+        using version_info;
+        print("This is the wrong version of the compiler! You need 0.1.038, but have %.%.0%\n", major, minor, micro);
+        return;
+    }
+
     if clean {
         write_string("\n=== Cleaning ===\n");
         file_delete("theos");
@@ -105,17 +113,29 @@ interrupt_handlers: [] struct {
         return;
     }
 
-    BOOTLOADER_SECTOR_COUNT :: 5;
-    assert(BOOTLOADER_SECTOR_COUNT * 0x200 + 0x7c00 < BOOT_DATA_AREA, "There is not enough space for the bootloader to go before the boot data area.");
-    BOOT_DATA_AREA          :: 0x9000;
-    BOOT_DATA_SIZE          :: 0x1000;
-
-    PAGE_TABLE_ADDRESS      :: BOOT_DATA_AREA + BOOT_DATA_SIZE;
-    PAGE_TABLE_SIZE         :: 0x6000;
-
-    KERNEL_LOAD_BUFFER :: PAGE_TABLE_ADDRESS + PAGE_TABLE_SIZE;
-
     make_directory_if_it_does_not_exist(".build");
+
+    if false {
+        write_string("\n=== Applying Module Patches ===\n");
+
+        success, exit_code, stdout, stderr := shell("which jai-linux", print_output = false);
+        if !stdout.count {
+            write_string("Could not find jai-linux executable using \"which\".\n");
+            return;
+        }
+
+        path := parse_path(stdout, reduce = false);
+        modules_path := tprint("%1%2", path_to_string(path, max_words = path.words.count - 2), "modules");
+
+        module_names := string.["Basic", "Window_Type.jai"];
+
+        for module_names {
+            shell("cp -R %/% modules", modules_path, it);
+
+            popen(to_c_string(tprint("patch -d. -p0 <modules/PATCHES/%.patch", it)), "r");
+            // shell("patch -d module_diff_patches/ -p0 <module_diff_patches/%.patch", it);
+        }
+    }
 
     if !no_kernel {
         write_string("\n=== Assembling Interrupt Routines ===\n");
@@ -137,11 +157,11 @@ interrupt_handlers: [] struct {
             noptions.input_file_name = ".build/interrupt.asm";
             noptions.warnings |= .ALL;
 
-            success, error_code, stdout, stderr := run_nasm(noptions);
+            result, stdout, stderr := run_nasm(noptions);
 
             write_string(stdout);
 
-            if error_code {
+            if result.exit_code {
                 write_string("\nAssembly error:\n");
                 write_string(stderr);
                 return;
@@ -150,16 +170,26 @@ interrupt_handlers: [] struct {
             }
         }
 
+        BOOTLOADER_SECTOR_COUNT :: 5;
+        assert(BOOTLOADER_SECTOR_COUNT * 0x200 + 0x7c00 < BOOT_DATA_AREA, "There is not enough space for the bootloader to go before the boot data area.");
+        BOOT_DATA_AREA          :: 0x9000;
+        BOOT_DATA_SIZE          :: 0x1000;
+
+        PAGE_TABLE_ADDRESS      :: BOOT_DATA_AREA + BOOT_DATA_SIZE;
+        PAGE_TABLE_SIZE         :: 0x6000;
+
+        KERNEL_LOAD_BUFFER :: PAGE_TABLE_ADDRESS + PAGE_TABLE_SIZE;
+
         write_string("\n=== Compiling Kernel ===\n");
         {
-            w := compiler_create_workspace("Kernel");
+            w := compiler_create_workspace("Formosa Kernel");
             options := get_build_options(w);
             options.output_executable_name = "kernel_elf";
             options.output_path = ".build/";
             options.output_type = .EXECUTABLE;
             options.entry_point_name = "kernel_entry";
 
-#if !ENABLE_IST options.disable_redzone = true;
+            #if !ENABLE_IST options.disable_redzone = true;
             options.stack_trace = true;
 
             options.array_bounds_check = .OFF;
@@ -199,7 +229,7 @@ interrupt_handlers: [] struct {
             {
                 isr_code: String_Builder;
                 for exceptions {
-                    append(*isr_code, tprint(ISR_DECLARATION, formatInt(it.slot, base=16), it.has_error_code, it.message));
+                    append(*isr_code, tprint(ISR_DECLARATION, formatInt(it.slot, base=16), it.message));
                     append(*isr_code, "\n");
                 }
                 for interrupt_handlers {
@@ -234,7 +264,7 @@ interrupt_handlers: [] struct {
             compiler_end_intercept(w);
 
             objdump_command := "objdump -x .build/kernel_elf -d -M intel --source";
-            success, error_code, stdout, stderr := shell(objdump_command, false);
+            success, error_code, stdout, stderr := shell(objdump_command, print_output = false);
             if !success || error_code != 0 {
                 write_string("objdump failed to run! (continuing)\n");
             }
@@ -455,16 +485,16 @@ assemble :: () -> bool {
     options.warnings |= .ALL;
 
     array_add(*options.include, ".build/");
-    success, error_code, stdout, stderr := run_nasm(options);
+    result, stdout, stderr := run_nasm(options);
 
-    if !success {
+    if result.type == .FAILED_TO_LAUNCH {
         write_string("nasm failed to run!\n");
         return false;
     }
 
     write_string(stdout);
 
-    if error_code {
+    if result.exit_code {
         write_string("\nAssembly error:\n");
         write_string(stderr);
         return false;
@@ -472,17 +502,20 @@ assemble :: () -> bool {
         write_string("Assembly success!\n");
     }
 
-    od_command := "od -t x1z -A x -v .build/boot_loader.bin";
-    success, error_code, stdout, stderr = shell(od_command, false);
-    if !success || error_code != 0 {
-        write_string("od failed to run! (continuing) \n");
+    {
+        od_command := "od -t x1z -A x -v .build/boot_loader.bin";
+        success, error_code, stdout, stderr := shell(od_command, print_output = false);
+        if !success || error_code != 0 {
+            write_string("od failed to run! (continuing) \n");
+        }
+        else write_entire_file(".build/boot_loader.hex.txt", stdout);
     }
-    else write_entire_file(".build/boot_loader.hex.txt", stdout);
 
     return true;
 }
 
-shell :: (command: string, print_output := true) -> bool, int, string, string {
+shell :: (format: string, args: .. Any, print_output := true) -> bool, int, string, string {
+    /*
     success, error_code, stdout, stderr := os_run_command(.. split(command, " "), capture_and_return_output = true);
 
     if print_output {
@@ -491,8 +524,9 @@ shell :: (command: string, print_output := true) -> bool, int, string, string {
     }
 
     return success, error_code, stdout, stderr;
+    */
 
-    /*
+    command := tprint(format, .. args);
     result, stdout, stderr := run_command(.. split(command, " "), capture_and_return_output = true);
 
     if print_output {
@@ -501,7 +535,6 @@ shell :: (command: string, print_output := true) -> bool, int, string, string {
     }
 
     return !result.exit_code, result.exit_code, stdout, stderr;
-    */
 }
 
 Plt_Patch :: struct {
@@ -630,13 +663,18 @@ using Basic :: #import "Basic";
 
 ISR_DECLARATION :: #string ISR
 isr_slot_0x% :: () #no_call {
-
     c: Context;
     push_context c {
-        // clear_screen();
-
         print("\n\n   An exception has occurred:  ", theme.primary);
         print("%\n", theme.accent);
+
+        // print("\n   Interrupt frame:\n");
+        // print("   RIP:    "); print_hex(stack_data.ip);    print("\n");
+        // print("   CS:     "); print_hex(stack_data.cs);    print("\n");
+        // print("   FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        // print("   SP:     "); print_hex(stack_data.sp);    print("\n");
+        // print("   SS:     "); print_hex(stack_data.ss);    print("\n");
+
         #if ENABLE_VESA paint_screen();
     }
 
@@ -695,20 +733,18 @@ global task_switch
 align 0x8
 task_switch:
     cli
-;    push_all
+    ; push_all
 
     mov rcx, [rax]
-    mov [rcx], rsp
+    mov [rcx], rsp ; Remember the current stack pointer for when we switch back TO the task we're currently switching from
 
-    mov [rax], rbx
-    mov rsp, [rbx]
-;    pop_all
+    mov [rax], rbx ; Set the current task to the new task
+    mov rsp, [rbx] ; Restore the stack pointer from the new current task
+    ; pop_all
 
     iretq
 
 END;
-
-
 
 
 
