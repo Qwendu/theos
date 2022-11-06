@@ -10,6 +10,30 @@
 // Extracting text
 // Extracting a file name
 
+// for_expansion :: (any: Any, body: Code, flags: For_Flags) #expand {
+// //    assert(any.type.type == .ARRAY, "Looping over any must be an array");
+//     tia := cast(*Type_Info_Array) any.type;
+// 
+//     stride := tia.element_type.runtime_size;
+//     array := cast(*[] void) input_data.value_pointer;
+// 
+//     for n: 0..array.count-1 {
+//         element: Any;
+//         element.type = tia.element_type;
+//         element.data = array.data + stride * n;
+//         `it_index := n;
+//         `it := any;
+// 
+//         #insert body;
+//     }
+// }
+
+// get_integer :: (any: Any) -> int {
+//     if any.type.type == .INTEGER {
+// 
+//     }
+// }
+
 Pnm :: struct {
     width: int;
     height: int;

@@ -48,7 +48,9 @@ interrupt_handlers: [] struct {
     .{ "page_fault_handler", 0x0e },
 ];
 
-#import "POSIX";
+#if OS == .LINUX {
+    #import "POSIX";
+}
 
 #run {
     write_string("\n=== Theos Build Begin ===\n");
@@ -115,7 +117,7 @@ interrupt_handlers: [] struct {
 
     make_directory_if_it_does_not_exist(".build");
 
-    if false {
+    #if OS == .LINUX if false {
         write_string("\n=== Applying Module Patches ===\n");
 
         success, exit_code, stdout, stderr := shell("which jai-linux", print_output = false);
@@ -205,10 +207,10 @@ interrupt_handlers: [] struct {
             script: Linker_Script;
             script.entry_point_name = "kernel_entry";
             script.sections = .[
-                .{ base, "text" },
-                .{ base, "rodata" },
-                .{ base, "data" },
-                .{ base, "bass" },
+                .{ base, "text",   0x1000 },
+                .{ base, "rodata", 0x1000 },
+                .{ base, "data",   0x1000 },
+                .{ base, "bass",   0x1000 },
             ];
             set_linker_script(*options, w, script);
 
@@ -736,10 +738,14 @@ task_switch:
     ; push_all
 
     mov rcx, [rax]
-    mov [rcx], rsp ; Remember the current stack pointer for when we switch back TO the task we're currently switching from
+
+    mov [rcx], rsp ; Store current stack on current (old) task
 
     mov [rax], rbx ; Set the current task to the new task
-    mov rsp, [rbx] ; Restore the stack pointer from the new current task
+
+    mov rsp, [rbx] ; Restore the stack pointer from the current (new) task
+    mov rdx, [rbx + 8]
+    mov cr3, rdx ; Restore the page table from the current (new) task
     ; pop_all
 
     iretq

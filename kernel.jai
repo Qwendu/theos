@@ -2,8 +2,6 @@
 Basic  :: #import "Basic";
 String :: #import "String";
 
-// Window_Type :: #import "Window_Type";
-
 #import "Machine_X64";
 #import "Elf";
 #import "Theos_Filesystem";
@@ -105,6 +103,8 @@ kernel_entry :: () {
         acpi_init();
         hpet_init();
 
+        initialize_task_manager();
+
         pci_scan_all_devices();
         discover_mass_storage_devices();
         assert(disks.count == 1, "You are having too much fun");
@@ -151,12 +151,13 @@ kernel_entry :: () {
         init_graphics(*boot_data);
         init_shell(font);
 
-        initialize_task_manager();
-
         startup := read_file("system/startup");
         commands := String.split(cast(string) startup, "\n");
-        for commands shell_run_command(it);
-        // printf("Usable (non-ACPI) physical memory: %Mb\n", total_memory / 0x100_000);
+        for commands {
+            shell_handle_text_command(it);
+            update_shell();
+            yield();
+        }
 
         paint_screen();
 
@@ -164,11 +165,12 @@ kernel_entry :: () {
             #asm {
                 hlt;
             }
+
             handle_keyboard_events();
             update_shell();
             move_mouse(mouse.position_x / 2, mouse.position_y / 2);
 
-            // yield();
+            yield();
         }
     }
 }
@@ -1176,14 +1178,7 @@ get_memory_map :: () -> [] Bios_Memory_Map_Entry {
     return memory_map;
 }
 
-Virtual_Address_Space :: struct {
-    root_page_table: u64;
-#place root_page_table;
-    pml4: u64;
-    virtual_page_watermark: int;
-}
-
-kernel_address_space: Virtual_Address_Space;
+heap_virtual_page_watermark: int;
 
 PAGE_TABLE_RANGE :: 0x200_000;
 
@@ -1203,8 +1198,9 @@ Page_Flags :: enum_flags u64 {
     EXECUTE_DISABLE :: 1 << 63;
 }
 
-VIRTUAL_MIRROR : u64 : 0xffff_ffff_c000_0000;
-KERNEL_BASE    : u64 : 0xffff_ffff_8000_0000;
+VIRTUAL_MIRROR   : u64 : 0xffff_ffff_c000_0000;
+KERNEL_BASE      : u64 : 0xffff_ffff_8000_0000;
+//                       0x0000_ffff_ffff_ffff;
 
 to_virtual :: (phys: u64) -> *u64 {
     return cast(*u64) (phys + VIRTUAL_MIRROR);
@@ -1220,8 +1216,7 @@ ONE_GB : u64 : 0x4000_0000;
 
 page_table_init :: () {
     using Page_Flags;
-    kernel_address_space.root_page_table = to_physical(pml4.data);
-    kernel_address_space.virtual_page_watermark = 0xffff_ffff_80c0_0000 / 0x1000;
+    heap_virtual_page_watermark = 0xffff_ffff_80c0_0000 / 0x1000;
 
     pml4[0x1ff] = to_physical(pdpt.data)      | xx PRESENT | READ_WRITE;
     pdpt[0x1ff] = to_physical(mirror_pd.data) | xx PRESENT | READ_WRITE;
@@ -1244,11 +1239,11 @@ page_table_init :: () {
         set_cr3 pml4_base;
     }
 
-    IA32_PAT :: 0x277;
+    MSR_PAT :: 0x277;
     mask: u64 = ~0xf;
     #asm {
         msr_name: gpr === c;
-        mov msr_name, IA32_PAT;
+        mov msr_name, MSR_PAT;
         rdmsr high:, low:, msr_name;
         and high, mask;
         or high, 0x1;
@@ -1288,15 +1283,16 @@ unmap_page :: (virtual_address: u64) {
     // pg := *virtual_address;
     // #asm { invlpg [pg]; }
 
-    using Page_Flags;
-
-    mask: u64 = 0b111111111;
+    mask: u64 = 0b1_1111_1111;
     pml4_offset := (virtual_address >> 39) & mask;
     pdpt_offset := (virtual_address >> 30) & mask;
     pd\ _offset := (virtual_address >> 21) & mask;
     pt\ _offset := (virtual_address >> 12) & mask;
 
-    root_table := to_virtual(kernel_address_space.root_page_table);
+    root_table := pml4.data;
+    if current_task {
+        root_table = to_virtual(current_task.page_table);
+    }
 
     pdpt := get_or_create_page_table(root_table, pml4_offset);
     pd   := get_or_create_page_table(pdpt, pdpt_offset);
@@ -1306,12 +1302,12 @@ unmap_page :: (virtual_address: u64) {
     pt[pt_offset] = 0;
 }
 
-map_memory :: (size_bytes: int, virtual_address: u64 = xx,no_check -1, physical_address: u64 = xx,no_check -1, flags := Page_Flags.PRESENT | .READ_WRITE, space := *kernel_address_space, physically_contiguous := false, loc := #caller_location) -> *void {
+map_memory :: (size_bytes: int, virtual_address: u64 = xx,no_check -1, physical_address: u64 = xx,no_check -1, flags := Page_Flags.PRESENT | .READ_WRITE, physically_contiguous := false, loc := #caller_location) -> *void {
     page_count := (size_bytes + (0x1000 - 1)) / 0x1000;
 
     source := virtual_address;
     if source == xx,no_check -1 {
-        source = get_new_virtual_page(page_count, space);
+        source = get_new_virtual_page(page_count);
     }
     target := physical_address;
 
@@ -1328,13 +1324,13 @@ map_memory :: (size_bytes: int, virtual_address: u64 = xx,no_check -1, physical_
         if target == xx,no_check -1  phys = get_new_page_frame();
         else phys = target + offset;
 
-        map_page(source + offset, phys, flags, space, loc);
+        map_page(source + offset, phys, flags, loc);
     }
 
     return xx source;
 }
 
-map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PRESENT | .READ_WRITE, space := *kernel_address_space, loc := #caller_location) {
+map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PRESENT | .READ_WRITE, loc := #caller_location) {
     using Page_Flags;
 
     mask: u64 = 0b111111111;
@@ -1343,7 +1339,10 @@ map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PR
     pd\ _offset := (virtual_address >> 21) & mask;
     pt\ _offset := (virtual_address >> 12) & mask;
 
-    root_table := to_virtual(space.root_page_table);
+    root_table := pml4.data;
+    if current_task {
+        root_table = to_virtual(current_task.page_table);
+    }
 
     pdpt := get_or_create_page_table(root_table, pml4_offset);
     pd   := get_or_create_page_table(pdpt, pdpt_offset);
@@ -1353,6 +1352,8 @@ map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PR
         print("Attempting to map a virtual page that is already present.\n");
         print("The virtual address is "); print_hex(virtual_address); print("\n");
         print("The physical address is "); print_hex(physical_address); print("\n");
+        paint_screen();
+        sleep(1000);
     }
 
     pt[pt_offset] = physical_address | cast(u64) flags;
@@ -1367,13 +1368,13 @@ address_is_page :: (address: u64) -> bool {
     return address % 0x1000 == 0;
 }
 
-get_new_virtual_page :: (count: int = 1, map: *Virtual_Address_Space) -> u64 {
-    address := map.virtual_page_watermark * 0x1000;
-    map.virtual_page_watermark += count;
+get_new_virtual_page :: (count: int = 1) -> u64 {
+    address := heap_virtual_page_watermark * 0x1000;
+    heap_virtual_page_watermark += count;
     return xx address;
 }
 
-get_physical_address :: (virtual_address: *void, address_space := *kernel_address_space) -> u64, present: bool {
+get_physical_address :: (virtual_address: *void) -> u64, present: bool {
     using Page_Flags;
     x := cast(u64) virtual_address;
 
@@ -1392,7 +1393,10 @@ get_physical_address :: (virtual_address: *void, address_space := *kernel_addres
         return table[index];
     }
 
-    root_table := to_virtual(address_space.root_page_table);
+    root_table := pml4.data;
+    if current_task {
+        root_table = to_virtual(current_task.page_table);
+    }
     pml4e := root_table[pml4_offset];
 
     pdpte := ReadTableEntry(pdpt_offset, pml4e);
@@ -1589,36 +1593,46 @@ release_page_frame :: (address: u64) {
     }
 }
 
+create_address_space :: () -> u64 {
+    page_table: [] u64;
+    page_table.data = map_memory(0x1000);
+    page_table.count = 0x200;
+    page_table[0x1ff] = pml4[0x1ff];
+    // page_table[0x000] = pml4[0x000];
+
+    return get_physical_address(page_table.data);
+}
 
 
 #import "Formosa_Executable_Format";
 
 parameters_base_address: *void;
 
-load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
+load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     if file.count < size_of(Formosa_Exe_Header) {
         printf("File is not an executable");
-        return false;
+        return null;
     }
 
     header := cast(*Formosa_Exe_Header) file.data;
 
     if header.magic != FORMOSA_EXE_MAGIC {
         printf("File is not an executable");
-        return false;
+        return null;
     }
 
     if header.type != .ELF && header.type != .MINIMAL {
         printf("Don't know how to run this type of executable: %\n", header.type);
-        return false;
+        return null;
     }
 
     if header.type == .MINIMAL {
         minimal_base := header.minimal_header;
 
-        make_task(start_process_minimal, minimal_base);
-        yield();
-        return true;
+        task := make_task(start_process_minimal, minimal_base);
+        task.state = .ASLEEP;
+        task.page_table = create_address_space();
+        return task;
     }
 
     table_size := header.elf_offset - size_of(Formosa_Exe_Header);
@@ -1631,22 +1645,22 @@ load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
 
     if parameters.count < type_table.count {
         printf("There are not enough parameters provided for the program! Wanted %, got %.\n", type_table.count, parameters.count);
-        return false;
+        return null;
     }
 
     if parameters.count > type_table.count {
         printf("There are too many parameters provided for the program! Wanted %, got %.\n", type_table.count, parameters.count);
-        return false;
+        return null;
     }
 
     map_memory(0x1000, virtual_address = PROGRAM_PARAMETER_BASE_ADDRESS);
-    defer unmap_memory(0x1000, PROGRAM_PARAMETER_BASE_ADDRESS);
+    // defer unmap_memory(0x1000, PROGRAM_PARAMETER_BASE_ADDRESS);
 
     cursor: int;
     for type_table {
         if parameters[it_index].type.type != it.type {
             printf("Parameter % is of the wrong type!\nWanted %, got %.\n", it_index + 1, it.type, parameters[it_index].type.type);
-            return false;
+            return null;
         }
 
         address := PROGRAM_PARAMETER_BASE_ADDRESS + cursor;
@@ -1655,43 +1669,45 @@ load_and_run_program :: (file: [] u8, parameters: .. Any) -> bool {
     }
 
     elf_base := file.data + header.elf_offset;
-    elf := cast(*Elf64_Ehdr) elf_base;
-    using Page_Flags;
 
-    for 0..elf.e_phnum - 1 {
-        base := elf_base + elf.e_phoff;
-        base += it       * elf.e_phentsize;
-        header := cast(*Elf64_Phdr) base;
+    task_data := map_memory(file.count);
+    memcpy(task_data, elf_base, file.count);
+    task := make_task(start_process_elf, task_data);
+    task.state = .ASLEEP;
+    task.page_table = create_address_space();
 
-        if header.p_type != PT_LOAD  continue;
-
-        flags := USER_SUPERVISOR | PRESENT | READ_WRITE;
-        offset := (header.p_vaddr % 0x1000);
-        map_memory(cast(int) (header.p_memsz), header.p_vaddr, flags = flags);
-        target := cast(*u8) header.p_vaddr;
-
-        for 0..header.p_filesz-1 {
-            target[it] = elf_base[header.p_offset + it];
-        }
-
-        for header.p_filesz..header.p_memsz-1 {
-            target[it] = 0;
-        }
-    }
-
-    make_task(start_process_elf, elf_base);
-    yield();
-    // start_process_elf(elf_base);
-
-    return true;
+    return task;
 }
 
 start_process_elf :: (elf: *void) {
     elf_header := cast(*Elf64_Ehdr) elf;
 
     tls := map_memory(0x4000);
+    defer unmap_memory(0x4000, xx tls);
     #asm FSGSBASE {
         wrfsbase tls;
+    }
+
+    for 0..elf_header.e_phnum - 1 {
+        base := elf + elf_header.e_phoff;
+        base += it  * elf_header.e_phentsize;
+        header := cast(*Elf64_Phdr) base;
+
+        if header.p_type != PT_LOAD  continue;
+
+        using Page_Flags;
+        flags := USER_SUPERVISOR | PRESENT | READ_WRITE;
+        offset := (header.p_vaddr % 0x1000);
+        map_memory(cast(int) (header.p_memsz), header.p_vaddr, flags = flags);
+        target := cast(*u8) header.p_vaddr;
+
+        for 0..header.p_filesz-1 {
+            target[it] = (cast(*u8) elf)[header.p_offset + it];
+        }
+
+        for header.p_filesz..header.p_memsz-1 {
+            target[it] = 0;
+        }
     }
 
     shell.foreground_task = current_task;
@@ -1700,7 +1716,6 @@ start_process_elf :: (elf: *void) {
     entry_point();
 
     shell.foreground_task = null;
-    unmap_memory(0x4000, xx tls);
 
     for 0..elf_header.e_phnum - 1 {
         base := elf + elf_header.e_phoff;
@@ -1710,6 +1725,8 @@ start_process_elf :: (elf: *void) {
         if header.p_type != PT_LOAD  continue;
         unmap_memory(xx header.p_memsz, header.p_vaddr);
     }
+
+    unmap_memory(0x1000, PROGRAM_PARAMETER_BASE_ADDRESS);
 }
 
 start_process_minimal :: (header: *void) {
@@ -1723,9 +1740,13 @@ start_process_minimal :: (header: *void) {
     memcpy(data, data_section_in_the_file.data, data_section_in_the_file.count);
     memcpy(code, code_section_in_the_file.data, code_section_in_the_file.count);
 
+    shell.foreground_task = current_task;
+
     entry := cast(u64) code;
     entry_point := << cast(*() #no_context) *entry;
     entry_point();
+
+    shell.foreground_task = null;
 
     unmap_memory(data_section_in_the_file.count, cast(u64) data_section_virtual_address);
     unmap_memory(code_section_in_the_file.count, cast(u64) code_section_virtual_address);
@@ -1752,6 +1773,11 @@ Syscall_Numbers :: enum {
     LIST_DIRECTORY   :: 0x11;
     GET_TIME         :: 0x12;
     GET_SYSTEM_PARAMETERS  :: 0x13;
+    WAIT_FOR_MESSAGE :: 0x14;
+
+    GET_DEVICE_LIST  :: 0x15;
+    GET_SPACE_NEEDED_FOR_DEVICE_LIST :: 0x16;
+    YIELD :: 0x17;
 }
 
 #program_export
@@ -1761,6 +1787,25 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
     syscall_context.allocator.proc = allocate_memory;
     syscall_context.logger = log;
     syscall_context.assertion_failed = assertion_failed;
+
+    get_message :: () -> Message {
+        result: Message;
+        result.kind = .NONE;
+
+        scan_code := read_key_buffer(*current_task.parent_process.input);
+
+        if scan_code != .NONE {
+            result.kind = .KEYBOARD;
+            result.keyboard_scan_code = xx scan_code;
+        }
+
+        // mouse_event := read_event_buffer(*mouse.buffer);
+        // if mouse_event != .NONE {
+        //     result.kind = .MOUSE;
+        //     result.mouse_event = mouse_event;
+        // }
+        return result;
+    }
 
     push_context syscall_context {
         old := current_task.the_context;
@@ -1835,7 +1880,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 watermark: int;
             }
 
-            allocator_data.space = map_memory(0x10_000);
+            allocator_data.space = map_memory(0x1_0000);
             context.allocator.proc = (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: *void, user_data: *void) -> *void {
                 if mode != .ALLOCATE return null;
 
@@ -1847,7 +1892,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                     data.watermark += 8 - (data.watermark % 8);
                 }
 
-                assert(data.watermark < Shell.PIPE_SIZE);
+                assert(data.watermark < 0x1_0000);
                 return result;
             };
 
@@ -1855,22 +1900,21 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             ti := cast(*Type_Info) data.rcx;
 
             if ti.type == .ARRAY {
-                shell.output_pipe.value.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
-                shell.output_pipe.value.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Array));
+                current_task.parent_process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
+                current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Array));
             } else if ti.type == .STRUCT {
-                shell.output_pipe.value.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
-                shell.output_pipe.value.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Struct));
+                current_task.parent_process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
+                current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Struct));
             } else if ti.type == .STRING {
-                shell.output_pipe.value.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
-                shell.output_pipe.value.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_String));
+                current_task.parent_process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
+                current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_String));
             }
             context.allocator.proc = allocate_memory;
         }
 
         else if data.rax == xx INPUT {
             target := cast(*Any) data.rbx;
-            << target = shell.input_pipe.value;
-            shell.input_pipe.value = null;
+            << target = current_task.parent_process.input_data;
         }
 
         else if data.rax == xx MAP_MEMORY {
@@ -1883,25 +1927,19 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         }
 
         else if data.rax == xx GET_MESSAGE {
+            yield();
             result := cast(*Message) data.rbx;
-            result.kind = .NONE;
+            << result = get_message();
+        }
 
-            // What the fuck.
-            // #asm { sti; }
-            // yield();
-            // #asm { cli; }
-            scan_code := read_key_buffer(*input_key_buffer);
+        else if data.rax == xx WAIT_FOR_MESSAGE {
+            result := cast(*Message) data.rbx;
+            << result = get_message();
 
-            if scan_code != .NONE {
-                result.kind = .KEYBOARD;
-                result.keyboard_scan_code = xx scan_code;
-                return;
-            }
-
-            mouse_event := read_event_buffer(*mouse.buffer);
-            if mouse_event != .NONE {
-                result.kind = .MOUSE;
-                result.mouse_event = mouse_event;
+            if result.kind == .NONE {
+                current_task.state = .WAITING_FOR_MESSAGE;
+                yield();
+                << result = get_message();
             }
         }
 
@@ -2021,7 +2059,39 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             << cast(*Basic.Apollo_Time) data.rbx = get_system_time();
         }
 
+        else if data.rax == xx GET_DEVICE_LIST {
+            device_list: [] Hardware_Device;
+            device_list.count = pci_device_count;
+            device_list.data = xx data.rbx;
+
+            for 0..pci_device_count-1 {
+                device_list[it].pci = pci_device_info[it];
+                device_list[it].type = .PCI;
+            }
+            << cast(*int) data.rcx = pci_device_count;
+        }
+
+        else if data.rax == xx GET_SPACE_NEEDED_FOR_DEVICE_LIST {
+            << cast(*int) data.rbx = pci_device_count * size_of(Hardware_Device);
+        }
+
+        else if data.rax == xx YIELD {
+            yield();
+        }
+
         else assert(false);
+    }
+}
+
+Hardware_Device :: struct {
+    type: enum int {
+        ACPI;
+        PCI;
+    };
+
+    using info: union {
+        acpi: Acpi_Table_Header;
+        pci: Pci_Device_Info;
     }
 }
 

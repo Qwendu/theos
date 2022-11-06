@@ -15,7 +15,6 @@ Syscall_Numbers :: enum {
     GET_MESSAGE      :: 0x08;
     CREATE_WINDOW    :: 0x09;
     CLOSE_WINDOW     :: 0x0a;
-    GET_WINDOW_WRITE_POINTER :: 0x14;
     REPAINT          :: 0x0b;
     GET_THEME        :: 0x0c;
     SET_THEME        :: 0x0d;
@@ -25,9 +24,14 @@ Syscall_Numbers :: enum {
     LIST_DIRECTORY   :: 0x11;
     GET_TIME         :: 0x12;
     GET_SYSTEM_PARAMETERS  :: 0x13;
+    WAIT_FOR_MESSAGE :: 0x14;
+
+    GET_DEVICE_LIST  :: 0x15;
+    GET_SPACE_NEEDED_FOR_DEVICE_LIST :: 0x16;
+    YIELD :: 0x17;
 }
 
-Window_Handle :: s64;
+// Window_Handle :: s64;
 
 System_Params :: struct {
     x_resolution: int;
@@ -109,6 +113,15 @@ repaint :: () {
 
     #asm {
         mov rax: gpr === a, REPAINT;
+        int 0x80;
+    }
+}
+
+yield :: () {
+    using Syscall_Numbers;
+
+    #asm {
+        mov rax: gpr === a, YIELD;
         int 0x80;
     }
 }
@@ -295,6 +308,54 @@ get_message :: () -> Message {
     return message;
 }
 
+wait_for_message :: () -> Message {
+    using Syscall_Numbers;
+
+    message: Message;
+    target := *message;
+    #asm {
+        mov rbx: gpr === b, target;
+        mov rax: gpr === a, WAIT_FOR_MESSAGE;
+
+        int 0x80;
+    }
+    return message;
+}
+
+get_device_list :: (space: *void) -> [] Hardware_Device {
+    using Syscall_Numbers;
+
+    count: int;
+    _count := *count;
+    #asm {
+        mov rcx: gpr === c, _count;
+        mov rbx: gpr === b, space;
+        mov rax: gpr === a, GET_DEVICE_LIST;
+
+        int 0x80;
+    }
+
+    result: [] Hardware_Device;
+    result.count = count;
+    result.data = cast(*Hardware_Device) space;
+    return result;
+}
+
+get_space_needed_for_device_list :: () -> int {
+    using Syscall_Numbers;
+
+    result: int;
+    _result := *result;
+    #asm {
+        mov rbx: gpr === b, _result;
+        mov rax: gpr === a, GET_SPACE_NEEDED_FOR_DEVICE_LIST;
+
+        int 0x80;
+    }
+
+    return result;
+}
+
 Message :: struct {
     kind: Message_Kind;
     using data: union {
@@ -308,6 +369,7 @@ Message_Kind :: enum {
     EXIT;
     KEYBOARD;
     MOUSE;
+    // THEME_CHANGED;
 }
 
 Theme :: struct {
@@ -341,7 +403,7 @@ Directory_Entry_Info :: struct {
 
     created: Apollo; @Theos.apollo
     modified: Apollo; @Theos.apollo
-    type: enum { DIR; FILE; }
+    type: enum int { dir; file; }
     size: int; @Theos.base16
 }
 
@@ -353,6 +415,55 @@ Rich_Text :: struct {
         start_position: int;
         color: u32;
     }
+}
+
+Acpi_Device :: struct {
+    table_header: struct {
+        signature: [4] u8;
+        length: u32;
+        revision: u8;
+        checksum: u8;
+        oem_id: [6] u8;
+        oem_table_id: [8] u8;
+        oem_revision: u32;
+        creator_id: u32;
+        creator_revision: u32;
+    };
+}
+
+Pci_Device :: struct {
+    header: struct {
+        vendor_id:       u16;
+        device_id:       u16;
+        status:          u16;
+        command:         u16;
+        revision_id:     u8;
+        prog_if:         u8;
+        subclass:        u8;
+        class_code:      u8;
+        cache_line_size: u8;
+        latency_timer:   u8;
+        header_type:     u8;
+        bist:            u8;
+    };
+
+    address: struct {
+        bus: u32;
+        index: u32;
+        function: u32;
+    };
+}
+
+Hardware_Device :: struct {
+    type: enum int {
+        ACPI;
+        PCI;
+    };
+
+    using data: union {
+        acpi: Acpi_Device;
+        pci: Pci_Device;
+    };
 }
 
 Keyboard_Scan_Code :: enum u16 {

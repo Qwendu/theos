@@ -75,10 +75,10 @@ pci_device_count: int;
 pci_devices_scanned: bool;
 
 Pci_Device_Info :: struct {
+    header: Pci_Header;
     bus: u32;
     index: u32;
     function: u32;
-    header: Pci_Header;
 }
 
 pci_scan_all_devices :: () {
@@ -240,8 +240,7 @@ pci_print_device_list :: () {
         new.Address.function = device_info.function;
     }
 
-    shell.input_pipe.value = cast([] Pci) list;
-    print_pipe();
+    print_ipc_data(list);
 }
 
 

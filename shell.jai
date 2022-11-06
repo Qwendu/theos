@@ -4,11 +4,11 @@ handle_keyboard_events :: () {
         scan_code := read_key_buffer(*input_key_buffer);
         if scan_code == .NONE return;
 
-        if false && shell.foreground_task != null {
-        //  write_key_buffer(*shell.foreground_task.input, scan_code);
-        //  if shell.foreground_task.state == .WAITING_FOR_EVENT {
-        //      shell.foreground_task.state = .AWAKE;
-        //  }
+        if shell.foreground_task != null {
+            write_key_buffer(*shell.foreground_task.parent_process.input, scan_code);
+            if shell.foreground_task.state == .WAITING_FOR_MESSAGE {
+                shell.foreground_task.state = .AWAKE;
+            }
         } else {
             write_key_buffer(*shell.key_buffer, scan_code);
         }
@@ -31,15 +31,6 @@ Shell :: struct {
 
     button_1: bool;
     button_2: bool;
-
-    PIPE_SIZE :: 0x10_0000;
-
-    Pipe :: struct {
-        value: Any;
-        space: *void;
-    }
-    output_pipe: *Pipe;
-    input_pipe: *Pipe;
 
     history: [..] string;
     history_index: int;
@@ -68,11 +59,6 @@ init_shell :: (font: Pnm) {
 
     write_to_text_viewer(*shell.command_text, "> ");
 
-    shell.output_pipe = map_memory(0x1000);
-    shell.input_pipe = shell.output_pipe + 1;
-
-    shell.output_pipe.space = map_memory(Shell.PIPE_SIZE);
-    shell.input_pipe.space = map_memory(Shell.PIPE_SIZE);
     map_memory(0x4000, virtual_address = 0xc_0000);
 
     old_history := read_file("system/history");
@@ -87,6 +73,7 @@ init_shell :: (font: Pnm) {
 update_shell :: () {
     shell_handle_keypress();
     shell_handle_mouse();
+    shell_update_command_lists();
 
     time := cmos_get_calendar_time();
     if xx (time.second % 2) == shell.command_text.point {
@@ -200,7 +187,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
 
             shell.command_index += 1;
 
-            if shell_run_command(command) {
+            if shell_handle_text_command(command) {
                 clear_text_viewer(*shell.command_text);
                 write_to_text_viewer(*shell.command_text, "> ");
                 update_syntax_highlighting();
@@ -402,92 +389,131 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
     write_to_text_viewer(*shell.command_text, ", ");
 }
 
-#scope_file
-args: [32] Any; // Whatever this is clean it up
-#scope_export
+command_lists: [..][..] Command_Step;
 
-shell_run_command :: (command_string: string) -> bool {
-    if !command_string.count return false;
+shell_update_command_lists :: () {
+    for list: command_lists {
+        for step: list {
+            if step.task == null continue list;
+            if step.task.state != .RETIRED continue list; 
 
-    parse_success, steps := parse_command(command_string);
-    if !parse_success return false;
+            if (it_index + 1) < list.count {
+                next_step := *list[it_index + 1];
+                if next_step.task == null {
+                    new_task := shell_load_program(next_step);
+                    if !new_task break;
 
-    for steps {
-        exe := read_file(it.name);
-        defer unmap_memory(exe.count, xx exe.data);
-        if !exe.count {
-            printf("Command not found: \"%\"!\n\n", it.name);
-            return false;
+                    new_task.parent_process.input_data = step.task.parent_process.output_data;
+                    new_task.state = .AWAKE;
+                    next_step.task = new_task;
+                    continue list;
+                }
+            }
         }
 
-        defer {
-            temp := shell.input_pipe;
-            shell.input_pipe = shell.output_pipe;
-            shell.output_pipe = temp;
+        last_task := list[list.count - 1].task;
+        if last_task {
+            print_ipc_data(last_task.parent_process.output_data);
         }
 
-        if !it.parameters.count {
-            load_and_run_program(exe);
-            continue;
-        }
+        remove list;
+    }
+}
 
-        header := cast(*Formosa_Exe_Header) exe.data;
+shell_load_program :: (step: Command_Step) -> *Task_Info {
+    exe := read_file(step.name);
+    defer unmap_memory(exe.count, xx exe.data);
 
-        type_table: [] *Type_Info;
-        type_table.count = header.input_parameter_count;
-        type_table.data = xx 0xc_0000;
+    if !exe.count {
+        printf("Command not found: \"%\"!\n\n", step.name);
+        return null;
+    }
 
-        table_size := header.elf_offset - size_of(Formosa_Exe_Header);
-        memcpy(type_table.data, exe.data + header.type_table_offset, table_size);
+    if !step.parameters.count {
+        task := load_program(exe);
+        return task;
+    }
 
-        for * it.parameters {
-            if it.type == .IDENT {
-                if it_index < type_table.count && type_table[it_index].type == .ENUM {
+    header := cast(*Formosa_Exe_Header) exe.data;
 
-                    the_enum := cast(*Type_Info_Enum) type_table[it_index];
-                    found: bool;
+    args := Basic.NewArray(32, Any); // what
 
-                    String.to_lower_in_place(it._string);
-                    for name: the_enum.names {
-                        if String.to_lower_copy(name) == it._string {
-                            it._int = the_enum.values[it_index];
-                            found = true;
-                            break;
-                        }
+    type_table: [] *Type_Info;
+    type_table.count = header.input_parameter_count;
+    type_table.data = xx 0xc_0000;
+
+    table_size := header.elf_offset - size_of(Formosa_Exe_Header);
+    memcpy(type_table.data, exe.data + header.type_table_offset, table_size);
+
+    for * step.parameters {
+        if it.type == .IDENT {
+            if it_index < type_table.count && type_table[it_index].type == .ENUM {
+
+                the_enum := cast(*Type_Info_Enum) type_table[it_index];
+                found: bool;
+
+                String.to_lower_in_place(it._string);
+                for name: the_enum.names {
+                    if String.to_lower_copy(name) == it._string {
+                        it._int = the_enum.values[it_index];
+                        found = true;
+                        break;
                     }
-
-                    args[it_index].value_pointer = *it.value;
-                    args[it_index].type = type_table[it_index];
-                } else {
-                    args[it_index] = it.value._string;
                 }
 
+                args[it_index].value_pointer = *it.value;
+                args[it_index].type = type_table[it_index];
+            } else {
+                args[it_index] = it.value._string;
             }
 
-            else if it.type == .STRING args[it_index] = it.value._string;
-            else if it.type == .INT    args[it_index] = it.value._int;
-
-            else assert(false);
         }
 
-        the_args: [] Any;
-        the_args.count = it.parameters.count;
-        the_args.data = args.data;
+        else if it.type == .STRING args[it_index] = it.value._string;
+        else if it.type == .INT    args[it_index] = it.value._int;
 
-        load_and_run_program(exe, .. the_args);
+        else assert(false);
     }
 
-    if shell.input_pipe.value.value_pointer {
-        print_pipe();
-        print("\n");
+    the_args: [] Any;
+    the_args.count = step.parameters.count;
+    the_args.data = args.data;
+
+    task := load_program(exe, .. the_args);
+    return task;
+}
+
+shell_handle_text_command :: (command_string: string) -> bool {
+    if !command_string.count return false;
+
+    parse_success, steps, tokens := parse_command(command_string);
+    if !parse_success || !steps.count return false;
+
+    list := Basic.array_add(*command_lists);
+    for steps {
+        entry := Basic.array_add(list);
+        entry.name = Basic.copy_string(it.name);
+
+        entry.parameters.data = map_memory(size_of(Shell_Typed_Value) * it.parameters.count);
+        entry.parameters.count = it.parameters.count;
+
+        for it.parameters {
+            entry.parameters[it_index] = it;
+            if it.type == .IDENT || it.type == .STRING {
+                entry.parameters[it_index]._string = Basic.copy_string(it._string);
+            }
+        }
     }
 
-    << shell.input_pipe = .{};
+    // if shell.text.buffer[shell.text.used - 1] == #char "\n" && shell.text.buffer[shell.text.used - 2] != #char "\n" {
+    //     print("\n");
+    // }
 
-    if shell.text.buffer[shell.text.used - 1] == #char "\n"
-        && shell.text.buffer[shell.text.used - 2] != #char "\n" {
-        print("\n");
-    }
+    task := shell_load_program((<< list)[0]);
+    if task == null return false;
+    task.state = .AWAKE;
+    (<< list)[0].task = task;
+
     return true;
 }
 
@@ -511,12 +537,13 @@ Shell_Typed_Value :: struct {
 
 Command_Step :: struct {
     name: string;
-    parameters: [..] Shell_Typed_Value;
+    parameters: [] Shell_Typed_Value;
+    task: *Task_Info;
 }
 
 parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
 
-    parse_error :: (format: string, args: .. Any) #expand {
+    generate_parse_error :: (format: string, args: .. Any) #expand {
         print("Command parse error:\n");
         printf(format, .. args);
 
@@ -552,7 +579,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
         step := Basic.array_add(*steps);
 
         if tok.type != .IDENT {
-            parse_error("Type the name of a command to run.\n");
+            generate_parse_error("Type the name of a command to run.\n");
             return false, steps, tokens;
         }
 
@@ -562,13 +589,16 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
         tok = tokens[index];
         if tok.type == .EOT return true, steps, tokens;
 
+        parameters: [..] Shell_Typed_Value;
+        defer step.parameters = parameters;
+
         while true {
             if tok.type == .VERTICAL_BAR {
                 index += 1;
                 break;
             }
 
-            element := Basic.array_add(*step.parameters);
+            element := Basic.array_add(*parameters);
             element.token_or_null = *tokens[index];
             if tok.type == .INT {
                 element.type = .INT;
@@ -586,7 +616,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
             }
 
             else {
-                parse_error("Expected a parameter, but got `Token.Type.%`\n", tok.type);
+                generate_parse_error("Expected a parameter, but got `Token.Type.%`\n", tok.type);
                 return false, steps, tokens;
             }
 
@@ -602,7 +632,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
             if tok.type == .EOT return true, steps, tokens;
 
             if tok.type != .VERTICAL_BAR {
-                parse_error("Expected a comma or vertical bar, but got `Token.Type.%`\n", tok.type);
+                generate_parse_error("Expected a comma or vertical bar, but got `Token.Type.%`\n", tok.type);
                 return false, steps, tokens;
             }
         }
@@ -738,8 +768,9 @@ tokenize_command :: (command: string) -> [..] Token {
     return result;
 }
 
-print_pipe :: () {
-    value := shell.input_pipe.value;
+print_ipc_data :: (value: Any) {
+    if value.value_pointer == null return;
+    if value.type == null return;
 
     if value.type.type == .ARRAY {
         array := cast(*[] void) value.value_pointer;
@@ -897,4 +928,6 @@ print_pipe :: () {
             color: Color;
         }
     }
+
+    print("\n");
 }

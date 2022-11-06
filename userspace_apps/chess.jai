@@ -39,9 +39,14 @@ Player_Kind :: enum {
 main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
     write_string("This program will fail. (redzone in the c library)\n");
     repaint();
-    nn := read_file("chess_res/nn-04cf2b4ed1da.nnue");
-    defer unmap_memory(nn.count, nn.data);
-    nnue_init(nn);
+
+    has_computer_player := (white_pieces == .CPU || black_pieces == .CPU);
+
+    if has_computer_player{
+        nn := read_file("chess_res/nn-04cf2b4ed1da.nnue");
+        defer unmap_memory(nn.count, nn.data);
+        nnue_init(nn);
+    }
 
     initialize_chess_game_memory(*chess);
     init_between_bitboards();
@@ -231,6 +236,7 @@ human_move :: () -> bool {
     generate_moves(*chess, *moves_arr);
 
     while true {
+        output(ifx white_to_move "White to move!" else "Black to move!");
         message := get_message();
         if message.kind == .KEYBOARD {
             if message.keyboard_scan_code == .ESC {
@@ -246,7 +252,6 @@ human_move :: () -> bool {
             }
             draw_square(selected_square);
             draw_square(old_square);
-            repaint();
 
             if message.keyboard_scan_code == .ENTER {
                 from := cvt_square(selected_square);
@@ -260,7 +265,6 @@ human_move :: () -> bool {
                     draw_square(move_start_square);
                     draw_square(old);
                     draw_square(cvt_square(from));
-                    repaint();
                 } else {
                     to   := cvt_square(selected_square);
                     from := cvt_square(move_start_square);
@@ -283,14 +287,15 @@ human_move :: () -> bool {
                                 draw_square(0);
                                 draw_square(3);
                             }
-                            repaint();
                             return true;
                         }
                     }
                     draw_square(cvt_square(from));
-                    repaint();
                 }
             }
+        } else if message.kind == .NONE {
+            repaint();
+            yield();
         }
     }
 }

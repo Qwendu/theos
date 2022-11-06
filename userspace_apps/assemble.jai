@@ -319,6 +319,7 @@ Memory :: struct {
 
 Typed_Value :: struct {
     type: Type;
+
     _string: string;
     _int: int;
     register: Register_Name;

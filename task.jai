@@ -1,6 +1,7 @@
 
 Task_Info :: struct {
     rsp: *void;
+    page_table: u64;
     next: *Task_Info;
 
     stack_bottom: *void;
@@ -13,24 +14,31 @@ Task_Info :: struct {
     state: enum {
         INVALID;
         AWAKE;
-        WAITING_FOR_EVENT;
-        SLEEPING;
+        WAITING_FOR_MESSAGE;
+        ASLEEP;
+        RETIRED;
     };
 
-    input: Event_Buffer(Keyboard_Scan_Code); // Should probably not be associated with a task but with a process or whatever
+    parent_process: struct {
+        input: Event_Buffer(Keyboard_Scan_Code);
+
+        input\_data: Any;
+        output_data: Any;
+    };
 }
 
+the_first_task: Task_Info;
 current_task: *Task_Info;
 
 initialize_task_manager :: () {
-    task := cast(*Task_Info) map_memory(size_of(Task_Info));
-
     task_switch :: () #c_call #foreign Interrupts;
     idt_add_handler(xx task_switch, 0x40);
-    task.next = task;
-    task.the_context = *context;
-    task.state = .AWAKE;
-    current_task = task;
+
+    the_first_task.next = *the_first_task;
+    the_first_task.the_context = *context;
+    the_first_task.state = .AWAKE;
+    the_first_task.page_table = to_physical(pml4.data);
+    current_task = *the_first_task;
 }
 
 switch_to_task :: (new: *Task_Info) {
@@ -77,6 +85,10 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
     task.startup_data = startup_data;
     task.state = .AWAKE;
 
+    cr3: u64;
+    #asm { get_cr3 cr3; }
+    task.page_table = cr3;
+
     return task;
 }
 
@@ -84,12 +96,15 @@ yield :: () {
     new := current_task.next;
     while new.state != .AWAKE {
         new = new.next;
-        if new == current_task.next #asm { hlt; }
+        if new == current_task.next {
+            switch_to_task(*the_first_task);
+            return;
+        }
     }
     switch_to_task(new);
 }
 
-exit :: (call_site := #caller_location) {
+exit :: () {
     task := current_task;
     while true {
         assert(task != null);
@@ -104,19 +119,6 @@ exit :: (call_site := #caller_location) {
     stack_top := current_task.stack_bottom - current_task.stack_size;
     unmap_memory(current_task.stack_size, cast(u64) stack_top);
 
-    yield();
-}
-
-work :: (data: *void) {
-    // message := << cast(*string) data;
-
-    printf("[%] Doing work...", "Task 1"); paint_screen();
-    sleep(ms = cast(int) rdtsc() % 100);
-    print(" done.\n"); paint_screen();
-    yield();
-
-    printf("[%] Doing further work...", "Task 1"); paint_screen();
-    sleep(ms = cast(int) rdtsc() % 100);
-    print(" done.\n"); paint_screen();
+    current_task.state = .RETIRED;
     yield();
 }

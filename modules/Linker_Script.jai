@@ -6,6 +6,7 @@ Linker_Script :: struct {
         // If consecutive sections are at the same base address, we put them after each other in the same order
         address: u64;
         name: string;
+        vm_alignment: int = -1;
     }
     sections: [] Section;
     entry_point_name: string;
@@ -27,7 +28,9 @@ set_linker_script :: (options: *Build_Options, w: Workspace, script: Linker_Scri
             print_to_builder(*code, "    . = 0x%;\n", formatInt(it.address, base = 16));
             last_address = it.address;
         }
-        print_to_builder(*code, "    .%\t: { * (.%); }\n", it.name, it.name);
+        print_to_builder(*code, "    .%\t: { * (.%)", it.name, it.name);
+        if it.vm_alignment != -1 print_to_builder(*code, " ALIGN(%)", it.vm_alignment);
+        print_to_builder(*code, "; }\n");
     }
 
     print_to_builder(*code, "}\n");

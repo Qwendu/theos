@@ -44,6 +44,8 @@ files/wait
 files/copy_file
 files/assemble
 files/inspect_exe
+files/equals
+files/get_people
 
 .#*
 
@@ -54,4 +56,3 @@ update
 test.jai
 files/code/x86_64.json
 /modules/.build/*
-files/shutdown
