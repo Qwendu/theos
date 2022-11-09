@@ -335,10 +335,9 @@ Keyboard_Scan_Code :: enum u16 {
     KEYPAD0;
     KEYPAD_PERIOD;
 
-    ISO_BACKSLASH :: 0x56; // Not on ansi keyboards
+    ISO_BACKSLASH :: 0x56;
     F11 :: 0x57;
     F12;
-
 
     E0_PREFIX_OFFSET :: 0xe0;
     MM_PREV_TRACK   :: E0_PREFIX_OFFSET + 0x10;
@@ -364,4 +363,6 @@ Keyboard_Scan_Code :: enum u16 {
     PAGE_DOWN;
     INSERT;
     DELETE;
+    FLAG            :: E0_PREFIX_OFFSET + 0x5b;
+    RIGHT_FLAG      :: E0_PREFIX_OFFSET + 0x5c;
 }

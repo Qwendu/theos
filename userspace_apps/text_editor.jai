@@ -23,8 +23,9 @@ main :: (filename: string) {
 
     width = params.x_resolution - 400;
     height = params.y_resolution - 400;
-    window = create_window(width, height);
-    defer close_window(window);
+    window_handle := create_window(width, height);
+    window = get_window_buffer(window_handle);
+    defer close_window(window_handle);
 
     memset(window, 0x20, width * height * 4);
     memset(window, 0xff, width * 4);
@@ -168,7 +169,7 @@ main :: (filename: string) {
         }
     }
 
-    close_window(window);
+    close_window(window_handle);
     repaint();
 }
 

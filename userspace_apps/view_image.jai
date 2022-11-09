@@ -24,8 +24,9 @@ main :: (file_name: string) {
 
     image := parse_pnm(image_file);
 
-    window: *u32 = create_window(image.width, image.height);
-    defer close_window(window);
+    window_handle := create_window(image.width, image.height);
+    window: *u32 = get_window_buffer(window_handle);
+    defer close_window(window_handle);
 
     blit(image, window);
 

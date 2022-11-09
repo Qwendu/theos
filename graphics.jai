@@ -215,8 +215,6 @@ execute_draw_list :: (list: *Draw_List_Entry, surface: Surface, debug_surface_ex
     }
 }
 
-// Probably move some of this into shell.jai somehow
-
 init_graphics :: (boot_data: Boot_Data) {
     g := *graphics;
 
@@ -238,7 +236,7 @@ paint_screen :: () {
 
     screen_size := g.screen.width * g.screen.height * size_of(u32);
     memcpy(g.vesa_framebuffer, g.screen.buffer, xx screen_size);
-    move_mouse(mouse.position_x / 2, mouse.position_y / 2);
+    move_mouse(mouse.position_x, mouse.position_y);
 }
 
 old_mouse_x: int;
@@ -271,6 +269,8 @@ move_mouse :: (new_x: int, new_y: int) {
 
     if new_x != old_mouse_x || new_y != old_mouse_y {
         last_mouse_move = get_the_fucking_time();
+    } else {
+        return;
     }
 
     // Clear the old location

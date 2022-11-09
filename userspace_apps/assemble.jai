@@ -354,6 +354,11 @@ code: [..] u8;
 main :: (source_file: string, output_name: string) {
     source_code := cast(string) read_file(source_file);
 
+    if !source_code.count {
+        write_string(tprint("File does not exist or is empty: %\n", source_file));
+        return;
+    }
+
     tokens := tokenize(source_code);
     // write_string(tprint("Token count: %\n", tokens.count));
     // output(tokens);

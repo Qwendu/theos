@@ -5,8 +5,9 @@ height := 1000;
 #import "Theos";
 
 main :: () {
-    window := create_window(width, height);
-    defer close_window(window);
+    window_handle := create_window(width, height);
+    window := get_window_buffer(window_handle);
+    defer close_window(window_handle);
 
     state: u32 = 2463534242;
     while true {
@@ -26,6 +27,6 @@ main :: () {
                 return;
             }
         }
-        #asm { hlt; }
+        // #asm { hlt; }
     }
 }

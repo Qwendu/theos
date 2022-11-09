@@ -23,15 +23,28 @@ Syscall_Numbers :: enum {
     READ_STRING      :: 0x10;
     LIST_DIRECTORY   :: 0x11;
     GET_TIME         :: 0x12;
-    GET_SYSTEM_PARAMETERS  :: 0x13;
+    GET_SYSTEM_PARAMETERS :: 0x13;
     WAIT_FOR_MESSAGE :: 0x14;
-
     GET_DEVICE_LIST  :: 0x15;
     GET_SPACE_NEEDED_FOR_DEVICE_LIST :: 0x16;
     YIELD :: 0x17;
+    QWERTYUIOP_RUN_COMMAND :: 0x18;
+    GET_WINDOW_BUFFER :: 0x19;
 }
 
-// Window_Handle :: s64;
+qwertyuiop_run_command :: (command: string) {
+    using Syscall_Numbers;
+
+    count := command.count;
+    data := command.data;
+    #asm {
+        mov rbx: gpr === b, data;
+        mov rcx: gpr === c, count;
+        mov rax: gpr === a, QWERTYUIOP_RUN_COMMAND;
+
+        int 0x80;
+    }
+}
 
 System_Params :: struct {
     x_resolution: int;
@@ -95,26 +108,6 @@ input :: () -> Any {
     }
 
     return result;
-}
-
-close_window :: (window: *u32) {
-    using Syscall_Numbers;
-
-    #asm {
-        mov rbx: gpr === b, window;
-        mov rax: gpr === a, CLOSE_WINDOW;
-
-        int 0x80;
-    }
-}
-
-repaint :: () {
-    using Syscall_Numbers;
-
-    #asm {
-        mov rax: gpr === a, REPAINT;
-        int 0x80;
-    }
 }
 
 yield :: () {
@@ -213,10 +206,13 @@ list_directory :: (name: string) -> [] Directory_Entry_Info {
     return result;
 }
 
-create_window :: (width: int, height: int) -> *u32 {
+
+Window_Handle :: s64;
+
+create_window :: (width: int, height: int) -> Window_Handle {
     using Syscall_Numbers;
 
-    result: *u32;
+    result: Window_Handle;
     target := *result;
     #asm {
         mov rbx: gpr === di, width;
@@ -227,6 +223,41 @@ create_window :: (width: int, height: int) -> *u32 {
         int 0x80;
     }
     return result;
+}
+
+close_window :: (window: Window_Handle) {
+    using Syscall_Numbers;
+
+    #asm {
+        mov rbx: gpr === b, window;
+        mov rax: gpr === a, CLOSE_WINDOW;
+
+        int 0x80;
+    }
+}
+
+get_window_buffer :: (window: Window_Handle) -> *u32 {
+    using Syscall_Numbers;
+
+    result: *u32;
+    target := *result;
+    #asm {
+        mov rcx: gpr === c, target;
+        mov rbx: gpr === b, window;
+        mov rax: gpr === a, GET_WINDOW_BUFFER;
+
+        int 0x80;
+    }
+    return result;
+}
+
+repaint :: () {
+    using Syscall_Numbers;
+
+    #asm {
+        mov rax: gpr === a, REPAINT;
+        int 0x80;
+    }
 }
 
 write_string :: (text: string) {
@@ -360,6 +391,7 @@ Message :: struct {
     kind: Message_Kind;
     using data: union {
         keyboard_scan_code: Keyboard_Scan_Code;
+        key: Keyboard_Scan_Code;
         mouse_event: Mouse_Event;
     };
 }

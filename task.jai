@@ -122,3 +122,73 @@ exit :: () {
     current_task.state = .RETIRED;
     yield();
 }
+
+
+
+
+
+Window_Handle :: s64;
+MAX_WINDOWS :: 32;
+
+windows: [MAX_WINDOWS] Window;
+
+Window :: struct {
+    blitter: *Blitter;
+    shadow: *Solid_Color;
+
+    owner: *Task_Info;
+    exists: bool;
+}
+
+create_window :: (width: int, height: int) -> Window_Handle {
+    for * windows {
+        if it.exists continue;
+
+        it.exists = true;
+        it.owner = current_task;
+
+        it.shadow = xx map_memory(size_of(Solid_Color));
+        it.blitter = xx map_memory(size_of(Blitter));
+
+        << it.shadow = .{};
+        << it.blitter = .{};
+
+        add_screen_draw_list_entry(it.shadow, 0, 0, "window shadow");
+        add_screen_draw_list_entry(it.blitter, 0, 0, "window");
+
+        it.blitter.source_surface = create_surface(width, height);
+
+        it.blitter.draw.x = graphics.screen.width / 2 - width / 2;
+        it.blitter.draw.y = graphics.screen.height / 2 - height / 2;
+        it.blitter.draw.width = width;
+        it.blitter.draw.height = height;
+
+        it.shadow.color.as_u32 = 0x181818;
+        it.shadow.draw.target_rect = it.blitter.draw.target_rect;
+        it.shadow.draw.width += 4;
+        it.shadow.draw.height += 4;
+
+        return cast(Window_Handle) it_index;
+    }
+}
+
+close_window :: (window: Window_Handle) {
+    w := *windows[window];
+
+    if !w.exists return;
+    if (w.owner != current_task) && (current_task != *the_first_task) return;
+
+    w.shadow.draw.prev.next = w.blitter.draw.next;
+    if w.blitter.draw.next {
+        w.blitter.draw.next.prev = w.shadow.draw.prev;
+    }
+
+    shell.background.draw.dirty = true;
+    shell.text.draw.dirty = true;
+    shell.command_text.draw.dirty = true;
+
+    destroy_surface(*w.blitter.source_surface);
+    w.exists = false;
+    unmap_memory(size_of(Blitter), cast(u64) w.blitter);
+    unmap_memory(size_of(Solid_Color), cast(u64) w.shadow);
+}

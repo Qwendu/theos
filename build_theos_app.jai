@@ -1,4 +1,4 @@
-// 1
+// 2
 
 entry_point :: #string END
 

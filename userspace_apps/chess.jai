@@ -66,8 +66,9 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
 
     pieces_pnm := read_file("chess_res/chess_pieces.ppm");
     pieces = parse_pnm(pieces_pnm);
-    window = create_window(window_size, window_size);
-    defer close_window(window);
+    window_handle := create_window(window_size, window_size);
+    window = get_window_buffer(window_handle);
+    defer close_window(window_handle);
 
     theme = get_theme();
 
@@ -235,13 +236,16 @@ human_move :: () -> bool {
     moves_arr: [..] Move16;
     generate_moves(*chess, *moves_arr);
 
+    need_repaint: bool;
     while true {
-        output(ifx white_to_move "White to move!" else "Black to move!");
+        // output(ifx white_to_move "White to move!" else "Black to move!");
         message := get_message();
+
         if message.kind == .KEYBOARD {
             if message.keyboard_scan_code == .ESC {
                 return false;
             }
+            need_repaint = true;
 
             old_square := selected_square;
             if message.keyboard_scan_code == {
@@ -294,7 +298,10 @@ human_move :: () -> bool {
                 }
             }
         } else if message.kind == .NONE {
-            repaint();
+            if need_repaint {
+                repaint();
+                need_repaint = false;
+            }
             yield();
         }
     }

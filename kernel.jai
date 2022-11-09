@@ -95,7 +95,7 @@ kernel_entry :: () {
         cpu = get_cpu_info();
         init_physical_allocator();
         page_table_init();
-        cmos_enable_irq(true);
+        // cmos_enable_irq(true);
         // cmos_set_rate(15);
 
         enable_simd(cpu);
@@ -162,13 +162,11 @@ kernel_entry :: () {
         paint_screen();
 
         while true {
-            #asm {
-                hlt;
-            }
+            // #asm { hlt; }
 
             handle_keyboard_events();
             update_shell();
-            move_mouse(mouse.position_x / 2, mouse.position_y / 2);
+            move_mouse(mouse.position_x, mouse.position_y);
 
             yield();
         }
@@ -410,7 +408,7 @@ BochsBreak :: () #expand {
 sleep :: (ms: int) {
     time := get_system_time();
     while true {
-        #asm { hlt; }
+//        #asm { hlt; }
 
         elapsed := Basic.operator-(get_system_time(), time);
         if Basic.to_milliseconds(elapsed) > ms break;
@@ -1363,9 +1361,22 @@ map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PR
 }
 
 address_is_page :: (address: u64) -> bool {
-    if !address return false;
-    if (address >> 48 != 0xffff) && (address >> 48 != 0x0) return false;
-    return address % 0x1000 == 0;
+    if !address {
+        printf("Address is not a page: %, it is zero\n", address);
+        return false;
+    }
+
+    if (address >> 48 != 0xffff) && (address >> 48 != 0x0) {
+        printf("Address is not a page: %, it is not canonical\n", address);
+        return false;
+    }
+
+    if address % 0x1000 {
+        printf("Address is not a page: %, it is not page aligned\n", address);
+        return false;
+    }
+
+    return true;
 }
 
 get_new_virtual_page :: (count: int = 1) -> u64 {
@@ -1627,9 +1638,12 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     }
 
     if header.type == .MINIMAL {
+        task_data := map_memory(file.count);
         minimal_base := header.minimal_header;
 
-        task := make_task(start_process_minimal, minimal_base);
+        memcpy(task_data, minimal_base, file.count);
+
+        task := make_task(start_process_minimal, task_data);
         task.state = .ASLEEP;
         task.page_table = create_address_space();
         return task;
@@ -1672,6 +1686,7 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
 
     task_data := map_memory(file.count);
     memcpy(task_data, elf_base, file.count);
+
     task := make_task(start_process_elf, task_data);
     task.state = .ASLEEP;
     task.page_table = create_address_space();
@@ -1715,7 +1730,7 @@ start_process_elf :: (elf: *void) {
     entry_point := << cast(*() #no_context) *elf_header.e_entry;
     entry_point();
 
-    shell.foreground_task = null;
+    shell.foreground_task = *the_first_task;
 
     for 0..elf_header.e_phnum - 1 {
         base := elf + elf_header.e_phoff;
@@ -1746,7 +1761,7 @@ start_process_minimal :: (header: *void) {
     entry_point := << cast(*() #no_context) *entry;
     entry_point();
 
-    shell.foreground_task = null;
+    shell.foreground_task = *the_first_task;
 
     unmap_memory(data_section_in_the_file.count, cast(u64) data_section_virtual_address);
     unmap_memory(code_section_in_the_file.count, cast(u64) code_section_virtual_address);
@@ -1772,12 +1787,13 @@ Syscall_Numbers :: enum {
     READ_STRING      :: 0x10;
     LIST_DIRECTORY   :: 0x11;
     GET_TIME         :: 0x12;
-    GET_SYSTEM_PARAMETERS  :: 0x13;
+    GET_SYSTEM_PARAMETERS :: 0x13;
     WAIT_FOR_MESSAGE :: 0x14;
-
     GET_DEVICE_LIST  :: 0x15;
     GET_SPACE_NEEDED_FOR_DEVICE_LIST :: 0x16;
     YIELD :: 0x17;
+    QWERTYUIOP_RUN_COMMAND :: 0x18;
+    GET_WINDOW_BUFFER :: 0x19;
 }
 
 #program_export
@@ -1834,7 +1850,6 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             text.data = xx data.rbx;
             text.count = xx data.rcx;
             print(text);
-//          paint_screen();
         }
 
         else if data.rax == xx READ_STRING {
@@ -1899,14 +1914,12 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             context.allocator.data = *allocator_data;
             ti := cast(*Type_Info) data.rcx;
 
+            current_task.parent_process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
             if ti.type == .ARRAY {
-                current_task.parent_process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
                 current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Array));
             } else if ti.type == .STRUCT {
-                current_task.parent_process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
                 current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Struct));
             } else if ti.type == .STRING {
-                current_task.parent_process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
                 current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_String));
             }
             context.allocator.proc = allocate_memory;
@@ -1946,33 +1959,12 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         else if data.rax == xx CREATE_WINDOW {
             width := cast(int) data.rdi;
             height := cast(int) data.rcx;
-            target := cast(**u32) data.rdx;
+            target := cast(*Window_Handle) data.rdx;
 
             printf("Width: %, height: %\n", width, height);
 
+            << target = create_window(width, height);
             paint_screen();
-            shadow: *Solid_Color = map_memory(size_of(Solid_Color));
-            blit: *Blitter = map_memory(size_of(Blitter));
-
-            << shadow = .{};
-            << blit = .{};
-
-            add_screen_draw_list_entry(shadow, 0, 0, "window shadow");
-            add_screen_draw_list_entry(blit, 0, 0, "window");
-
-            blit.source_surface = create_surface(width, height);
-
-            blit.draw.x = graphics.screen.width / 2 - width / 2;
-            blit.draw.y = graphics.screen.height / 2 - height / 2;
-            blit.draw.width = width;
-            blit.draw.height = height;
-
-            shadow.color.as_u32 = 0x181818;
-            shadow.draw.target_rect = blit.draw.target_rect;
-            shadow.draw.width += 4;
-            shadow.draw.height += 4;
-
-            << target = blit.source_surface.buffer;
         }
 
         else if data.rax == xx REPAINT {
@@ -1985,6 +1977,19 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 entry = entry.next;
             }
             paint_screen();
+        }
+
+        else if data.rax == xx CLOSE_WINDOW {
+            close_window(xx data.rbx);
+        }
+
+        else if data.rax == xx GET_WINDOW_BUFFER {
+            w := *windows[data.rbx];
+
+            if !w.exists return;
+            if w.owner != current_task return;
+
+            << cast(**u32) data.rcx = w.blitter.source_surface.buffer;
         }
 
         else if data.rax == xx READ_FILE {
@@ -2033,28 +2038,6 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             shell.text.draw.dirty = true;
         }
 
-        else if data.rax == xx CLOSE_WINDOW {
-            entry := graphics.draw_list;
-            while entry {
-                if entry.type == .BLITTER {
-                    blit := cast(*Blitter) entry;
-                    if blit.source_surface.buffer == xx data.rbx {
-                        if entry.prev entry.prev.prev.next = entry.next;
-                        if entry.next entry.next.prev = entry.prev.prev;
-
-                        destroy_surface(*blit.source_surface);
-                        unmap_memory(size_of(Blitter), xx entry);
-                        unmap_memory(size_of(Solid_Color), xx entry.prev);
-                        shell.background.draw.dirty = true;
-                        shell.text.draw.dirty = true;
-                        shell.command_text.draw.dirty = true;
-                        return;
-                    }
-                }
-                entry = entry.next;
-            }
-        }
-
         else if data.rax == xx GET_TIME {
             << cast(*Basic.Apollo_Time) data.rbx = get_system_time();
         }
@@ -2079,7 +2062,13 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             yield();
         }
 
-        else assert(false);
+        else if data.rax == xx QWERTYUIOP_RUN_COMMAND {
+            text: string;
+            text.data = xx data.rbx;
+            text.count = xx data.rcx;
+        }
+
+        else assert(false, Basic.tprint("Not a syscall number: %", data.rax));
     }
 }
 
