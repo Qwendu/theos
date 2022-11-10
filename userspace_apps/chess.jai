@@ -36,7 +36,16 @@ Player_Kind :: enum {
     HUMAN;
 }
 
+// Command_Line_Arguments :: struct {
+//     white_pieces: Player_Kind;
+//     black_pieces: Player_Kind;
+//     depth: int;
+// } @Theos.ProgramParameters
+
 main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
+    // using args: Command_Line_Arguments;
+    // Formosa.get_program_parameters(*args);
+
     write_string("This program will fail. (redzone in the c library)\n");
     repaint();
 

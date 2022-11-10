@@ -63,8 +63,6 @@ init_shell :: (font: Pnm) {
 
     write_to_text_viewer(*shell.command_text, "> ");
 
-    map_memory(0x4000, virtual_address = 0xc_0000);
-
     old_history := read_file("system/history");
     if !old_history.count {
         create_file("system/history");
@@ -357,6 +355,9 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
 
     header := cast(*Formosa_Exe_Header) exe.data;
 
+    map_memory(header.type_table_size, cast(u64) header.type_table_virtual_address);
+    defer unmap_memory(header.type_table_size, cast(u64) header.type_table_virtual_address);
+
     type_table: [] *Type_Info;
     type_table.count = header.input_parameter_count;
     type_table.data = xx header.type_table_virtual_address;
@@ -461,18 +462,23 @@ shell_load_program :: (step: Command_Step) -> *Task_Info {
         return null;
     }
 
+    header := cast(*Formosa_Exe_Header) exe.data;
+
+    use_type_table := header.type_table_size && (header.type == .ELF);
+
+    if use_type_table map_memory(header.type_table_size, cast(u64) header.type_table_virtual_address);
+    defer if use_type_table unmap_memory(header.type_table_size, cast(u64) header.type_table_virtual_address);
+
     if !step.parameters.count {
         task := load_program(exe);
         return task;
     }
 
-    header := cast(*Formosa_Exe_Header) exe.data;
-
     args := Basic.NewArray(32, Any); // what
 
     type_table: [] *Type_Info;
     type_table.count = header.input_parameter_count;
-    type_table.data = xx 0xc_0000;
+    type_table.data = xx header.type_table_virtual_address;
 
     table_size := header.elf_offset - size_of(Formosa_Exe_Header);
     memcpy(type_table.data, exe.data + header.type_table_offset, table_size);

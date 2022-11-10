@@ -1350,6 +1350,7 @@ map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PR
         print("Attempting to map a virtual page that is already present.\n");
         print("The virtual address is "); print_hex(virtual_address); print("\n");
         print("The physical address is "); print_hex(physical_address); print("\n");
+        assert(false);
         paint_screen();
         sleep(1000);
     }
@@ -1653,7 +1654,7 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
 
     type_table: [] *Type_Info;
     type_table.count = header.input_parameter_count;
-    type_table.data = xx 0xc_0000;
+    type_table.data = xx header.type_table_virtual_address;
 
     memcpy(type_table.data, file.data + header.type_table_offset, table_size);
 
@@ -1667,8 +1668,10 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
         return null;
     }
 
-    map_memory(0x1000, virtual_address = PROGRAM_PARAMETER_BASE_ADDRESS);
-    // defer unmap_memory(0x1000, PROGRAM_PARAMETER_BASE_ADDRESS);
+    // Allocate the program parameters into kernel memory
+    PARAMETER_BUFFER_SIZE :: 0x1000;
+    parameter_base := map_memory(PARAMETER_BUFFER_SIZE);
+    defer unmap_memory(PARAMETER_BUFFER_SIZE, cast(u64) parameter_base);
 
     cursor: int;
     for type_table {
@@ -1677,9 +1680,11 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
             return null;
         }
 
-        address := PROGRAM_PARAMETER_BASE_ADDRESS + cursor;
+        address := parameter_base + cursor;
         memcpy(xx address, parameters[it_index].value_pointer, it.runtime_size);
         cursor += it.runtime_size;
+
+        assert(cursor < PARAMETER_BUFFER_SIZE);
     }
 
     elf_base := file.data + header.elf_offset;
@@ -1691,8 +1696,35 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     task.state = .ASLEEP;
     task.page_table = create_address_space();
 
+    old := current_task.page_table;
+    new := task.page_table;
+    current_task.page_table = new;
+    #asm { set_cr3 new; }
+    map_memory(PARAMETER_BUFFER_SIZE, virtual_address = PROGRAM_PARAMETER_BASE_ADDRESS);
+    memcpy(xx PROGRAM_PARAMETER_BASE_ADDRESS, parameter_base, PARAMETER_BUFFER_SIZE);
+    #asm { set_cr3 old; }
+    current_task.page_table = old;
+
     return task;
 }
+
+/*
+
+There is a buffer that contains the values of the parameters that are passed to programs
+This buffer needs to be at a predetermined address, determined at compilation of the program
+So it needs to be in the address space of the program
+We could build the buffer and then copy it from kernel memory into process memory easily
+But we need to build it at the right address so that the pointers will be correct
+
+1. Build the buffer at the base address that the program wants it to be at (low memory) but in the kernel address space
+2. Copy the buffer into kernel memory, so that it's visible in the user program's address space
+3. Switch to the user program's address space and copy the buffer down into process memory from kernel memory
+
+"This buffer needs to be at a predetermined address, determined at compilation of the program"
+This is not actually true, and we could just put the buffer in kernel code. Because there's only the string pointer, which is already pointing to the buffer in kernel code.
+But the program still needs to know where it is
+
+*/
 
 start_process_elf :: (elf: *void) {
     elf_header := cast(*Elf64_Ehdr) elf;
@@ -1740,8 +1772,6 @@ start_process_elf :: (elf: *void) {
         if header.p_type != PT_LOAD  continue;
         unmap_memory(xx header.p_memsz, header.p_vaddr);
     }
-
-    unmap_memory(0x1000, PROGRAM_PARAMETER_BASE_ADDRESS);
 }
 
 start_process_minimal :: (header: *void) {

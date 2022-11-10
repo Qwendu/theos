@@ -1,4 +1,4 @@
-// 2
+// 3
 
 entry_point :: #string END
 
@@ -215,7 +215,8 @@ build_theos_app :: (name: string) {
         header: Formosa_Exe_Header;
         header.input_parameter_count = program_parameters.count;
         header.type_table_offset = size_of(Formosa_Exe_Header);
-        header.type_table_virtual_address = 0xc_0000;
+        header.type_table_virtual_address = cast(*Type_Info) 0xc_0000;
+        header.type_table_size = 0x4000;
 
         type_info_pointer_table := NewArray(header.input_parameter_count, u64);
         type_table: String_Builder;
@@ -225,7 +226,7 @@ build_theos_app :: (name: string) {
             ti := it.type_inst.result;
 
             GetVirtualAddress :: () -> u64 #expand {
-                return header.type_table_virtual_address + offset + 8 * cast(u64) type_info_pointer_table.count;
+                return cast(u64) header.type_table_virtual_address + offset + 8 * cast(u64) type_info_pointer_table.count;
             }
 
             type_info_pointer_table[it_index] = xx GetVirtualAddress();

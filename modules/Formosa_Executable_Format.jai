@@ -11,7 +11,8 @@ Formosa_Exe_Header :: struct {
     // Fix this nonsense
     input_parameter_count: int;
     type_table_offset: int;
-    type_table_virtual_address: u64;
+    type_table_virtual_address: *Type_Info;
+    type_table_size: int;
 
     union {
         elf_offset: int;

@@ -128,6 +128,7 @@ exit :: () {
 
 
 Window_Handle :: s64;
+INVALID_WINDOW_HANDLE : Window_Handle : -1;
 MAX_WINDOWS :: 32;
 
 windows: [MAX_WINDOWS] Window;
@@ -170,9 +171,13 @@ create_window :: (width: int, height: int) -> Window_Handle {
 
         return cast(Window_Handle) it_index;
     }
+
+    return INVALID_WINDOW_HANDLE;
 }
 
 close_window :: (window: Window_Handle) {
+    if window == INVALID_WINDOW_HANDLE return;
+
     w := *windows[window];
 
     if !w.exists return;
