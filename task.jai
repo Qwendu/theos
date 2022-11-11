@@ -172,6 +172,11 @@ create_window :: (width: int, height: int) -> Window_Handle {
         return cast(Window_Handle) it_index;
     }
 
+    for * windows if it.exists {
+        it.blitter.draw.dirty = true;
+        it.shadow.draw.dirty = true;
+    }
+
     return INVALID_WINDOW_HANDLE;
 }
 
@@ -196,4 +201,9 @@ close_window :: (window: Window_Handle) {
     w.exists = false;
     unmap_memory(size_of(Blitter), cast(u64) w.blitter);
     unmap_memory(size_of(Solid_Color), cast(u64) w.shadow);
+
+    for * windows if it.exists {
+        it.blitter.draw.dirty = true;
+        it.shadow.draw.dirty = true;
+    }
 }
