@@ -122,63 +122,63 @@ execute_draw_list :: (list: *Draw_List_Entry, surface: Surface, debug_surface_ex
     entry := list;
     if !entry return;
 
-    {
-        {
-            if shell.text.draw.dirty  shell.command_text.draw.dirty = true;
-        }
-    }
-
-    dirty: Rect;
-    while true {
-        if entry.dirty {
-            dirty = union_(entry.target_rect, dirty);
-        }
-
-        entry._dirty_subregion = .{};
-        if !entry.next break;
-        entry = entry.next;
-    }
-
-    while entry {
-        if !entry.transparency && (dirty.width && dirty.height) {
-            this := entry.target_rect;
-
-            if (this.x <= dirty.x && this.width >= (dirty.width + (dirty.x - this.x))) {
-                if (this.y <= dirty.y) && (this.height >= (dirty.y - this.y)) {
-                    depth := this.height - (dirty.y - this.y);
-                    entry._dirty_subregion.x = dirty.x;
-                    entry._dirty_subregion.y = dirty.y;
-                    entry._dirty_subregion.width = dirty.width;
-                    entry._dirty_subregion.height = depth;
-
-                    dirty.y += depth;
-                    dirty.height -= depth;
-                    entry.dirty = false;
-                    if dirty.height < 0 dirty = .{};
-                } else if this.y <= (dirty.y + dirty.height) && (this.height >= (dirty.y + dirty.height) - this.y) {
-                    depth := dirty.y + dirty.height - this.y;
-                    entry._dirty_subregion.x = dirty.x;
-                    entry._dirty_subregion.y = this.y;
-                    entry._dirty_subregion.width = dirty.width;
-                    entry._dirty_subregion.height = depth;
-
-                    dirty.height -= depth;
-                    entry.dirty = false;
-                    if dirty.height < 0 dirty = .{};
-                }
-            } else if entry.dirty {
-                entry._dirty_subregion = entry.target_rect;
-            }
-        }
-        entry = entry.prev;
-    }
+//    {
+//        {
+//            if shell.text.draw.dirty  shell.command_text.draw.dirty = true;
+//        }
+//    }
+//
+//    dirty: Rect;
+//    while true {
+//        if entry.dirty {
+//            dirty = union_(entry.target_rect, dirty);
+//        }
+//
+//        entry = .{};
+//        if !entry.next break;
+//        entry = entry.next;
+//    }
+//
+//    while entry {
+//        if !entry.transparency && (dirty.width && dirty.height) {
+//            this := entry.target_rect;
+//
+//            if (this.x <= dirty.x && this.width >= (dirty.width + (dirty.x - this.x))) {
+//                if (this.y <= dirty.y) && (this.height >= (dirty.y - this.y)) {
+//                    depth := this.height - (dirty.y - this.y);
+//                    entry.x = dirty.x;
+//                    entry.y = dirty.y;
+//                    entry.width = dirty.width;
+//                    entry.height = depth;
+//
+//                    dirty.y += depth;
+//                    dirty.height -= depth;
+//                    entry.dirty = false;
+//                    if dirty.height < 0 dirty = .{};
+//                } else if this.y <= (dirty.y + dirty.height) && (this.height >= (dirty.y + dirty.height) - this.y) {
+//                    depth := dirty.y + dirty.height - this.y;
+//                    entry.x = dirty.x;
+//                    entry.y = this.y;
+//                    entry.width = dirty.width;
+//                    entry.height = depth;
+//
+//                    dirty.height -= depth;
+//                    entry.dirty = false;
+//                    if dirty.height < 0 dirty = .{};
+//                }
+//            } else if entry.dirty {
+//                entry = entry.target_rect;
+//            }
+//        }
+//        entry = entry.prev;
+//    }
 
     entry = list;
     while entry {
-        if !entry.dirty && !(entry._dirty_subregion.width && entry._dirty_subregion.height) {
-            entry = entry.next;
-            continue;
-        }
+        // if !entry.dirty && !(entry.width && entry.height) {
+        //     entry = entry.next;
+        //     continue;
+        // }
         if entry.type == {
           case .SOLID_COLOR;
             solid := cast(*Solid_Color) entry;
@@ -333,16 +333,30 @@ Blitter :: struct {
 }
 
 render_blitter :: (blit: *Blitter, surface: Surface) {
-    for 0..blit.source_surface.height - 1 {
-        target := surface.buffer + blit.draw._dirty_subregion.x;
-        target += blit.draw._dirty_subregion.y * surface.stride;
+    count := blit.draw.height;
+
+    highest_y := blit.draw.y + blit.draw.height;
+    if highest_y > VESA_HEIGHT  count -= highest_y - VESA_HEIGHT;
+
+    start := 0;
+    if blit.draw.y < 0 start = -blit.draw.y;
+
+    for start..count - 1 {
+        target := surface.buffer + blit.draw.x;
+        target += blit.draw.y * surface.stride;
         target += it * surface.stride;
 
         source := blit.source_surface.buffer;
         source += it * blit.source_surface.stride;
 
         count := blit.source_surface.width;
-        for 0..count-1 {
+
+        highest_x := blit.draw.x + blit.draw.width;
+        if highest_x > VESA_WIDTH  count -= highest_x - VESA_WIDTH;
+
+        start := 0;
+        if blit.draw.x < 0 start = -blit.draw.x;
+        for start..count-1 {
             target[it] = source[it];
         }
     }
@@ -358,13 +372,27 @@ Solid_Color :: struct {
 }
 
 render_solid_color :: (solid: *Solid_Color, surface: Surface) {
-    for 0..solid.draw._dirty_subregion.height - 1 {
-        target := surface.buffer + solid.draw._dirty_subregion.x;
-        target += solid.draw._dirty_subregion.y * surface.stride;
+    count := solid.draw.height;
+
+    highest_y := solid.draw.y + solid.draw.height;
+    if highest_y > VESA_HEIGHT  count -= highest_y - VESA_HEIGHT;
+
+    start := 0;
+    if solid.draw.y < 0 start = -solid.draw.y;
+
+    for start..count - 1 {
+        target := surface.buffer + solid.draw.x;
+        target += solid.draw.y * surface.stride;
         target += it * surface.stride;
 
-        count := solid.draw._dirty_subregion.width;
-        for 0..count-1 {
+        count := solid.draw.width;
+
+        highest_x := solid.draw.x + solid.draw.width;
+        if highest_x > VESA_WIDTH  count -= highest_x - VESA_WIDTH;
+
+        start := 0;
+        if solid.draw.x < 0 start = -solid.draw.x;
+        for start..count-1 {
             target[it] = solid.color.as_u32;
         }
     }

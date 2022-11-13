@@ -15,14 +15,15 @@ Task_Info :: struct {
         INVALID;
         AWAKE;
         WAITING_FOR_MESSAGE;
-        ASLEEP;
+        SLEEPING;
         RETIRED;
     };
 
     parent_process: struct {
         input: Event_Buffer(Keyboard_Scan_Code);
+        mouse_events: Event_Buffer(Mouse_Event);
 
-        input\_data: Any;
+        input_data: Any;
         output_data: Any;
     };
 }
@@ -134,8 +135,8 @@ MAX_WINDOWS :: 32;
 windows: [MAX_WINDOWS] Window;
 
 Window :: struct {
-    blitter: *Blitter;
-    shadow: *Solid_Color;
+    blitter: Blitter;
+    shadow: Solid_Color;
 
     owner: *Task_Info;
     exists: bool;
@@ -148,14 +149,11 @@ create_window :: (width: int, height: int) -> Window_Handle {
         it.exists = true;
         it.owner = current_task;
 
-        it.shadow = xx map_memory(size_of(Solid_Color));
-        it.blitter = xx map_memory(size_of(Blitter));
+        it.shadow = .{};
+        it.blitter = .{};
 
-        << it.shadow = .{};
-        << it.blitter = .{};
-
-        add_screen_draw_list_entry(it.shadow, 0, 0, "window shadow");
-        add_screen_draw_list_entry(it.blitter, 0, 0, "window");
+        add_screen_draw_list_entry(*it.shadow, 0, 0, Basic.tprint("shadow %", it_index));
+        add_screen_draw_list_entry(*it.blitter, 0, 0, Basic.tprint("window %", it_index));
 
         it.blitter.source_surface = create_surface(width, height);
 
@@ -170,11 +168,6 @@ create_window :: (width: int, height: int) -> Window_Handle {
         it.shadow.draw.height += 4;
 
         return cast(Window_Handle) it_index;
-    }
-
-    for * windows if it.exists {
-        it.blitter.draw.dirty = true;
-        it.shadow.draw.dirty = true;
     }
 
     return INVALID_WINDOW_HANDLE;
@@ -199,11 +192,27 @@ close_window :: (window: Window_Handle) {
 
     destroy_surface(*w.blitter.source_surface);
     w.exists = false;
-    unmap_memory(size_of(Blitter), cast(u64) w.blitter);
-    unmap_memory(size_of(Solid_Color), cast(u64) w.shadow);
 
-    for * windows if it.exists {
-        it.blitter.draw.dirty = true;
-        it.shadow.draw.dirty = true;
+    paint_screen();
+}
+
+move_to_front :: (window: Window_Handle) {
+    if window == INVALID_WINDOW_HANDLE return;
+    w := *windows[window];
+    if !w.exists return;
+    if w.blitter.draw.next == null return;
+
+    w.shadow.draw.prev.next = w.blitter.draw.next;
+    w.blitter.draw.next.prev = w.shadow.draw.prev;
+
+    entry := graphics.draw_list;
+    while entry.next {
+        entry = entry.next;
     }
+
+    entry.next = *w.shadow.draw;
+    w.shadow.draw.prev = entry;
+    w.blitter.draw.next = null;
+
+    paint_screen();
 }

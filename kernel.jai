@@ -98,7 +98,7 @@ kernel_entry :: () {
         // cmos_enable_irq(true);
         // cmos_set_rate(15);
 
-        enable_simd(cpu);
+        enable_simd();
 
         acpi_init();
         hpet_init();
@@ -153,6 +153,7 @@ kernel_entry :: () {
 
         startup := read_file("system/startup");
         commands := String.split(cast(string) startup, "\n");
+
         for commands {
             shell_handle_text_command(it);
             update_shell();
@@ -165,6 +166,7 @@ kernel_entry :: () {
             // #asm { hlt; }
 
             handle_keyboard_events();
+            handle_mouse_events();
             update_shell();
             move_mouse(mouse.position_x, mouse.position_y);
 
@@ -357,13 +359,13 @@ divru :: (dividend: $T, $$ divisor: T) -> T {
     return (dividend + (divisor - 1)) / divisor;
 }
 
-enable_simd :: (cpu: Cpu_X86) {
-    CR0_MP         ::   1 << 1;
+enable_simd :: () {
+    CR0_MP         :=   1 << 1;
     CR0_EM_CLEAR   := ~(1 << 2);
-    CR4_OSFXSR     ::   1 << 9;
-    CR4_OSXMMEXCPT ::   1 << 10;
-    CR4_OSXSAVE    ::   1 << 18;
-    CR4_FSGSBASE   ::   1 << 16;
+    CR4_OSFXSR     :=   1 << 9;
+    CR4_OSXMMEXCPT :=   1 << 10;
+    CR4_OSXSAVE    :=   1 << 18;
+    CR4_FSGSBASE   :=   1 << 16;
 
     if check_feature(cpu.feature_leaves, .SSE) #asm {
         get_cr0 cr0:;
@@ -383,19 +385,19 @@ enable_simd :: (cpu: Cpu_X86) {
         set_cr4 cr4;
     }
 
-//    if check_feature(cpu.feature_leaves, .OSXSAVE) #asm {
-//        get_cr4 cr4:;
-//        or  cr4, CR4_OSXSAVE;
-//        set_cr4 cr4;
-//    }
-//
-//    if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
-//        index: gpr === c;
-//
-//        xgetbv xcr0_h:, xcr0_l:, index;
-//        or xcr0_l, 7;
-//        xsetbv xcr0_h, xcr0_l, index;
-//    }
+    if check_feature(cpu.feature_leaves, .OSXSAVE) #asm {
+        get_cr4 cr4:;
+        or  cr4, CR4_OSXSAVE;
+        set_cr4 cr4;
+    }
+
+    if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
+        index: gpr === c;
+
+        xgetbv xcr0_h:, xcr0_l:, index;
+        or xcr0_l, 7;
+        xsetbv xcr0_h, xcr0_l, index;
+    }
 }
 
 BochsBreak :: () #expand {
@@ -489,13 +491,9 @@ gdt_init :: () {
     gdtrp := *gdtr;
 
     #if ENABLE_IST {
-        tss.ist[0] = KERNEL_BASE + 0x400_000;
-        tss.ist[1] = KERNEL_BASE + 0x400_000 - 0x1000;
-        tss.ist[2] = KERNEL_BASE + 0x400_000 - 0x2000;
-        tss.ist[3] = KERNEL_BASE + 0x400_000 - 0x3000;
-        tss.ist[4] = KERNEL_BASE + 0x400_000 - 0x4000;
-        tss.ist[5] = KERNEL_BASE + 0x400_000 - 0x5000;
-        tss.ist[6] = KERNEL_BASE + 0x400_000 - 0x6000;
+        for *tss.ist {
+            << it = KERNEL_BASE + 0x400_000 - it_index * 0x1000;
+        }
 
         gdtr.limit += 0x8;
         tss.iobp = size_of(Task_State_Segment);
@@ -1248,7 +1246,7 @@ page_table_init :: () {
         wrmsr high, low, msr_name;
     }
 
-    new_bitmap_space := map_memory(total_memory / 0x1000 / 8); // One bit per physical page
+    new_bitmap_space := map_memory(total_memory / 0x1000 / 8);
     memcpy(new_bitmap_space, bitmap_space.data, bitmap_space.count);
     bitmap_space.data = new_bitmap_space;
     bitmap_space.count = total_memory;
@@ -1645,7 +1643,7 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
         memcpy(task_data, minimal_base, file.count);
 
         task := make_task(start_process_minimal, task_data);
-        task.state = .ASLEEP;
+        task.state = .SLEEPING;
         task.page_table = create_address_space();
         return task;
     }
@@ -1693,7 +1691,7 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     memcpy(task_data, elf_base, file.count);
 
     task := make_task(start_process_elf, task_data);
-    task.state = .ASLEEP;
+    task.state = .SLEEPING;
     task.page_table = create_address_space();
 
     old := current_task.page_table;
@@ -1707,24 +1705,6 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
 
     return task;
 }
-
-/*
-
-There is a buffer that contains the values of the parameters that are passed to programs
-This buffer needs to be at a predetermined address, determined at compilation of the program
-So it needs to be in the address space of the program
-We could build the buffer and then copy it from kernel memory into process memory easily
-But we need to build it at the right address so that the pointers will be correct
-
-1. Build the buffer at the base address that the program wants it to be at (low memory) but in the kernel address space
-2. Copy the buffer into kernel memory, so that it's visible in the user program's address space
-3. Switch to the user program's address space and copy the buffer down into process memory from kernel memory
-
-"This buffer needs to be at a predetermined address, determined at compilation of the program"
-This is not actually true, and we could just put the buffer in kernel code. Because there's only the string pointer, which is already pointing to the buffer in kernel code.
-But the program still needs to know where it is
-
-*/
 
 start_process_elf :: (elf: *void) {
     elf_header := cast(*Elf64_Ehdr) elf;
@@ -1838,7 +1818,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         result: Message;
         result.kind = .NONE;
 
-        scan_code := read_key_buffer(*current_task.parent_process.input);
+        scan_code := read_event_buffer(*current_task.parent_process.input);
 
         if scan_code != .NONE {
             result.kind = .KEYBOARD;
@@ -1865,7 +1845,6 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
 
                 physical_memory: int;
                 used_physical_memory: int;
-                // Add more stuff if it comes up, so that we don't need a million syscalls for stuff
             }
 
             sys: *System_Params = xx data.rbx;

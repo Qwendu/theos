@@ -477,6 +477,8 @@ virtualbox :: () {
     shell("VBoxManage closemedium theos.vdi");
     shell("VBoxManage storageattach theos --storagectl PIIX4 --port 0 --medium theos.vdi --device 0 --type hdd");
     shell("VBoxManage modifyvm theos --hpet on");
+    shell("VBoxManage setextradata theos GUI/DefaultCloseAction PowerOff");
+    shell("VBoxManage startvm theos");
 }
 
 assemble :: () -> bool {

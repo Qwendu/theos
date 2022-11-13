@@ -32,13 +32,12 @@ main :: (file_name: string) {
 
     repaint();
     while true {
-        message := get_message();
+        message := wait_for_message();
         if message.kind == .KEYBOARD {
             if message.keyboard_scan_code == .ESC {
                 break;
             }
         }
-        if message.kind == .NONE #asm { hlt; }
     }
 }
 

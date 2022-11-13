@@ -5,7 +5,7 @@
 - Structured shell that can manipulate typed data
 - Custom executable format that supports typechecked and autocompleteable command line parameters
 - Custom filesystem with apollo-time timestamps
-- Many apps like chess and text editing
+- Cooperative multitasking
 
 ## Compile and run
 You have to set USE_SIMD in Basic/Print.jai to false. I do not know why. You can make a copy of Basic in theos/modules so that you don't have to modifiy the module globally.

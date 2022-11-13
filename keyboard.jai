@@ -2,21 +2,11 @@
 // scan_table         :: "\0#1234567890-=\0\tqwertyuiop[]\0\0asdfghjkl;'`\0\\zxcvbnm,./\0*\0 ";
 // scan_table_shifted :: "\0#!@#$%^&*()_+\0\0QWERTYUIOP{}\0\0ASDFGHJKL:\"~\0|ZXCVBNM<>?\0*\0 ";
 
-Key_Buffer :: Event_Buffer(Keyboard_Scan_Code);
-
 Event_Buffer :: struct (T: Type) {
     size :: 32;
     buffer: [size] T;
     read_index: int;
     write_index: int;
-}
-
-read_key_buffer :: (key_buffer: *Key_Buffer) -> Keyboard_Scan_Code {
-    return read_event_buffer(key_buffer);
-}
-
-write_key_buffer :: (key_buffer: *Key_Buffer, key: Keyboard_Scan_Code) #no_context {
-    write_event_buffer(key_buffer, key);
 }
 
 read_event_buffer :: (event_buffer: *Event_Buffer($T)) -> T {
@@ -42,7 +32,7 @@ write_event_buffer :: (event_buffer: *Event_Buffer($T), event: T) #no_context {
     write_index %= size;
 }
 
-input_key_buffer: Key_Buffer;
+input_key_buffer: Event_Buffer(Keyboard_Scan_Code);
 sitting_on_0xe0: bool;
 
 
@@ -61,7 +51,7 @@ ps2_interrupt :: () #c_call {
         key += 0xe0;
         sitting_on_0xe0 = false;
     }
-    write_key_buffer(*input_key_buffer, cast(Keyboard_Scan_Code) key);
+    write_event_buffer(*input_key_buffer, cast(Keyboard_Scan_Code) key);
 }
 
 mouse_wait :: ($ is_signal: bool) #no_context {
@@ -178,6 +168,11 @@ ps2_mouse :: () #c_call {
 
     mouse.position_x += delta_x;
     mouse.position_y -= delta_y;
+
+    mouse.position_x %= VESA_WIDTH;
+    mouse.position_y %= VESA_HEIGHT;
+    if mouse.position_x < 0 mouse.position_x += VESA_WIDTH;
+    if mouse.position_y < 0 mouse.position_y += VESA_HEIGHT;
 }
 
 do_mouse :: true;

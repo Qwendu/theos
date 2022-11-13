@@ -92,7 +92,6 @@ main :: (file_name: string) {
 
         add_text("% ", it, color = theme.highlight);
         if it >= 32 && it <= 126 {
-            // Character is printable!
             text[it_index % 8] = it;
         } else {
             text[it_index % 8] = #char ".";

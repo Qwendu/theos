@@ -1,16 +1,31 @@
 
 handle_keyboard_events :: () {
     while true {
-        scan_code := read_key_buffer(*input_key_buffer);
-        if scan_code == .NONE return;
+        scan_code := read_event_buffer(*input_key_buffer);
+        if scan_code == .NONE break;
         if scan_code == .FLAG || shell.flag_held {
-            write_key_buffer(*the_first_task.parent_process.input, scan_code);
+            write_event_buffer(*the_first_task.parent_process.input, scan_code);
             continue;
         }
 
-        assert(shell.foreground_task != null);
+        write_event_buffer(*shell.foreground_task.parent_process.input, scan_code);
+        if shell.foreground_task.state == .WAITING_FOR_MESSAGE {
+            shell.foreground_task.state = .AWAKE;
+        }
+    }
+}
 
-        write_key_buffer(*shell.foreground_task.parent_process.input, scan_code);
+handle_mouse_events :: () {
+    while true {
+        press := read_event_buffer(*mouse.buffer);
+        // printf("Read event\n");
+        if press == .NONE break;
+        if shell.flag_held {
+            write_event_buffer(*the_first_task.parent_process.mouse_events, press);
+            continue;
+        }
+
+        write_event_buffer(*shell.foreground_task.parent_process.mouse_events, press);
         if shell.foreground_task.state == .WAITING_FOR_MESSAGE {
             shell.foreground_task.state = .AWAKE;
         }
@@ -24,15 +39,16 @@ Shell :: struct {
     command_buffer_size: int;
     background: Solid_Color;
 
-    mouse_events: Event_Buffer(Mouse_Event);
-
     shift_held: bool;
     ctrl_held: bool;
     flag_held: bool;
-    command_index: int;
+    lmb_held: bool;
 
-    button_1: bool;
-    button_2: bool;
+    dragging := INVALID_WINDOW_HANDLE;
+    window_drag_offset_x: int;
+    window_drag_offset_y: int;
+
+    command_index: int;
 
     history: [..] string;
     history_index: int;
@@ -77,11 +93,14 @@ update_shell :: () {
     shell_handle_mouse();
     shell_update_command_lists();
 
-    time := cmos_get_calendar_time();
-    if xx (time.second % 2) == shell.command_text.point {
-        shell.command_text.point = !shell.command_text.point;
-        shell.command_text.draw.dirty = true;
-        paint_screen();
+    if shell.foreground_task == *the_first_task || shell.command_text.point {
+        time := get_system_time();
+        ct := theos_apollo_to_calendar(time);
+        if xx (ct.millisecond > 500) == shell.command_text.point {
+            shell.command_text.point = !shell.command_text.point;
+            shell.command_text.draw.dirty = true;
+            paint_screen();
+        }
     }
 }
 
@@ -120,23 +139,72 @@ update_syntax_highlighting :: () {
 }
 
 shell_handle_mouse :: () {
-    // event := read_event_buffer(*mouse.buffer);
-    // if event == .BUTTON_1_PRESSED {
-    //     shell.text.scroll_position += 1;
-    //     shell.text.draw.dirty = true;
-    //     shell.command_text.draw.dirty = true;
-    //     paint_screen();
-    // }
-    // if event == .BUTTON_2_PRESSED {
-    //     shell.text.scroll_position -= 1;
-    //     shell.text.draw.dirty = true;
-    //     shell.command_text.draw.dirty = true;
-    //     paint_screen();
-    // }
+    while true {
+        event := read_event_buffer(*the_first_task.parent_process.mouse_events);
+        if event == .NONE break;
+
+        if event == .BUTTON_1_PRESSED {
+            shell.lmb_held = true;
+
+            x := mouse.position_x;
+            y := mouse.position_y;
+            hit := INVALID_WINDOW_HANDLE;
+
+            for *windows {
+                if (x > it.blitter.draw.x) && (x < it.blitter.draw.x + it.blitter.draw.width) && (y > it.blitter.draw.y) && (y < it.blitter.draw.y + it.blitter.draw.height) {
+                    if hit == INVALID_WINDOW_HANDLE {
+                        hit = it_index;
+                    } else {
+                        entry := *windows[hit].blitter.draw;
+                        while entry {
+                            if entry == *it.blitter.draw {
+                                hit = it_index;
+                                break;
+                            }
+                            entry = entry.next;
+                        }
+                    }
+                }
+            }
+
+            move_to_front(hit);
+            shell.dragging = hit;
+
+            if hit != INVALID_WINDOW_HANDLE {
+                w := *windows[hit];
+                if w.exists {
+                    shell.foreground_task = w.owner;
+                    shell.window_drag_offset_x = x - w.blitter.draw.x;
+                    shell.window_drag_offset_y = y - w.blitter.draw.y;
+                }
+            } else {
+                shell.foreground_task = *the_first_task;
+            }
+        }
+
+        if event == .BUTTON_1_RELEASED {
+            shell.lmb_held = false;
+            shell.dragging = INVALID_WINDOW_HANDLE;
+        }
+    }
+
+    if shell.lmb_held && shell.dragging != INVALID_WINDOW_HANDLE {
+        w := *windows[shell.dragging];
+        if !w.exists return;
+
+        x := mouse.position_x;
+        y := mouse.position_y;
+        w.blitter.draw.x = x - shell.window_drag_offset_x;
+        w.blitter.draw.y = y - shell.window_drag_offset_y;
+        w.shadow.draw.x = x - shell.window_drag_offset_x;
+        w.shadow.draw.y = y - shell.window_drag_offset_y;
+
+        paint_screen();
+    }
 }
 
 shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = "" {
-    scan_code := read_key_buffer(*the_first_task.parent_process.input);
+    scan_code := read_event_buffer(*the_first_task.parent_process.input);
     if scan_code == .NONE return;
 
     while true {
@@ -253,6 +321,11 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
 
         else if shell.flag_held && scan_code == .TAB {
             shell.foreground_task = shell.foreground_task.next;
+            for *windows {
+                if it.exists && it.owner == shell.foreground_task {
+                    move_to_front(it_index);
+                }
+            }
         }
 
         else if scan_code == .TAB {
@@ -288,6 +361,8 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             shell.command_text.draw.dirty = true;
         }
 
+        else if scan_code == .ESC {};
+
         else {
             if key >= scan_table.count key = 0;
 
@@ -311,7 +386,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             }
         }
 
-        scan_code = read_key_buffer(*the_first_task.parent_process.input);
+        scan_code = read_event_buffer(*the_first_task.parent_process.input);
         if scan_code == .NONE break;
     }
 
