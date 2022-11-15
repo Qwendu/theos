@@ -208,6 +208,7 @@ list_directory :: (name: string) -> [] Directory_Entry_Info {
 
 
 Window_Handle :: s64;
+INVALID_WINDOW_HANDLE : Window_Handle : -1;
 
 create_window :: (width: int, height: int) -> Window_Handle {
     using Syscall_Numbers;

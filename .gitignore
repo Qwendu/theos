@@ -6,8 +6,6 @@ theos
 modules/Basic/
 modules/File/
 modules/Input/
-modules/Window_Creation/
-modules/Window_Type.jai
 
 program
 *.vdi
