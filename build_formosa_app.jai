@@ -3,7 +3,7 @@
 entry_point :: #string END
 
 #program_export
-_theos_start :: () #no_context {
+_formosa_start :: () #no_context {
     user_context: Context;
     user_context.allocator.proc = allocate_memory;
     user_context.logger = my_log;
@@ -14,14 +14,14 @@ _theos_start :: () #no_context {
 }
 
 my_log :: (message: string, data: *void, info: Log_Info) {
-    Theos :: #import "Theos";
-    Theos.write_string(message);
+    Formosa :: #import "Formosa";
+    Formosa.write_string(message);
 }
 
 allocate_memory :: (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: *void, user_data: *void) -> *void {
-    Theos :: #import "Theos";
+    Formosa :: #import "Formosa";
     if mode == .FREE {
-        Theos.unmap_memory(old_size, xx old_buffer);
+        Formosa.unmap_memory(old_size, xx old_buffer);
         return null;
     }
 
@@ -30,29 +30,29 @@ allocate_memory :: (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: 
             return old_buffer;
         }
 
-        new := Theos.map_memory(size);
+        new := Formosa.map_memory(size);
         memcpy(new, old_buffer, old_size);
         return new;
     }
 
-    return Theos.map_memory(size);
+    return Formosa.map_memory(size);
 }
 
 assertion_failed :: (location: Source_Code_Location, message: string) {
-    Theos :: #import "Theos";
-    #import "Theos_Utilities";
+    Formosa :: #import "Formosa";
+    #import "Formosa_Utilities";
 
-    Theos.write_string("\nAssertion failure!\n  -> ");
-    Theos.write_string(location.fully_pathed_filename);
-    Theos.write_string(":");
+    Formosa.write_string("\nAssertion failure!\n  -> ");
+    Formosa.write_string(location.fully_pathed_filename);
+    Formosa.write_string(":");
     write_int(location.line_number);
 
     if message.count {
-        Theos.write_string("\n     ");
-        Theos.write_string(message);
+        Formosa.write_string("\n     ");
+        Formosa.write_string(message);
     }
-    Theos.write_string("\n\n");
-    Theos.repaint();
+    Formosa.write_string("\n\n");
+    Formosa.repaint();
 
     while true {
         #asm { hlt; }
@@ -61,7 +61,7 @@ assertion_failed :: (location: Source_Code_Location, message: string) {
 
 END;
 
-build_theos_app :: (name: string) {
+build_formosa_app :: (name: string) {
 /*    set_build_options_dc(.{do_output = false});
 
     user_args, compiler_args := get_build_options().compile_time_command_line;
@@ -78,7 +78,7 @@ build_theos_app :: (name: string) {
         options.intermediate_path = ".build/";
         options.output_path = ".build/userspace_apps/";
         options.output_type = .EXECUTABLE;
-        options.entry_point_name = "_theos_start";
+        options.entry_point_name = "_formosa_start";
 
         #if !ENABLE_IST options.disable_redzone = true;
 
@@ -96,7 +96,7 @@ build_theos_app :: (name: string) {
         array_add(*new_path, ..options.import_path);
         options.import_path = new_path;
 
-        options.additional_linker_arguments = .["-e", "_theos_start"];
+        options.additional_linker_arguments = .["-e", "_formosa_start"];
 
         set_build_options(options, w);
 
@@ -128,7 +128,7 @@ build_theos_app :: (name: string) {
 
                 for typechecked.procedure_bodies {
                     body := it.expression;
-                    if body.header.name == "_theos_start" for body.block.statements {
+                    if body.header.name == "_formosa_start" for body.block.statements {
                         if body.body_flags & .ALREADY_MODIFIED break;
 
                         if it.kind == .PUSH_CONTEXT {

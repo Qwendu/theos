@@ -1,5 +1,5 @@
 
-#import "Theos";
+#import "Formosa";
 
 main :: () {
     write_string("You are in a field.\n");

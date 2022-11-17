@@ -1,8 +1,8 @@
 
 #import "Basic";
 
-#import "Theos";
-#import "Theos_Utilities";
+#import "Formosa";
+#import "Formosa_Utilities";
 #import "Formosa_Executable_Format";
 
 main :: (file_name: string) {

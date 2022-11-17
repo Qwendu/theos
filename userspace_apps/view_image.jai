@@ -1,6 +1,6 @@
 
-#import "Theos";
-#import "Theos_Utilities";
+#import "Formosa";
+#import "Formosa_Utilities";
 
 main :: (file_name: string) {
     image_file := read_file(file_name);

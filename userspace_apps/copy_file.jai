@@ -1,5 +1,5 @@
 
-#import "Theos";
+#import "Formosa";
 
 main :: (existing: string, new: string) {
     e := read_file(existing);

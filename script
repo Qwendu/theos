@@ -1,10 +1,10 @@
 
-#import "Theos_Filesystem";
+#import "Formosa_Filesystem";
 #import "Basic";
 #import "File";
 
 #run {
-    disk_image := read_entire_file("theos");
+    disk_image := read_entire_file("formosa");
     fs_user_data = disk_image.data;
 
     write_block = (block_index: int, block: *Disk_Block, disk_image: *void) {

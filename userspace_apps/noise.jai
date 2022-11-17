@@ -2,7 +2,7 @@
 width := 1000;
 height := 1000;
 
-#import "Theos";
+#import "Formosa";
 
 main :: () {
     window_handle := create_window(width, height);

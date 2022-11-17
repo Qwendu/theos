@@ -1,6 +1,6 @@
 
-#import "Theos";
-#import "Theos_Utilities";
+#import "Formosa";
+#import "Formosa_Utilities";
 
 #load "chess_engine/movegen.jai";
 #load "chess_engine/search.jai";
@@ -40,7 +40,7 @@ Player_Kind :: enum {
 //     white_pieces: Player_Kind;
 //     black_pieces: Player_Kind;
 //     depth: int;
-// } @Theos.ProgramParameters
+// } @Formosa.ProgramParameters
 
 main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
     // using args: Command_Line_Arguments;
@@ -162,11 +162,11 @@ write_fen :: () {
     cursor += 1;
     space[cursor] = #char "0";
 
-    time := theos_get_time();
+    time := formosa_get_time();
     apollo: Apollo_Time;
     apollo.low = time.low;
     apollo.high = time.high;
-    ct := theos_apollo_to_calendar(apollo);
+    ct := formosa_apollo_to_calendar(apollo);
     filename := tprint("chess_res/games/%1%2%3", ct.hour, ct.minute, ct.second);
 
     // Fix this dumbass API
@@ -401,7 +401,7 @@ blend :: (target: u32, source: u32, t: float) -> u32 #expand {
 
 
 
-theos_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
+formosa_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
 
     APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
     milliseconds := to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);

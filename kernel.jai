@@ -4,7 +4,7 @@ String :: #import "String";
 
 #import "Machine_X64";
 #import "Elf";
-#import "Theos_Filesystem";
+#import "Formosa_Filesystem";
 
 #load "pci.jai";
 #load "graphics.jai";
@@ -138,7 +138,7 @@ kernel_entry :: () {
         font: Pnm = parse_pnm(font_file);
 
         ct := cmos_get_calendar_time();
-        boot_time = theos_calendar_to_apollo(ct);
+        boot_time = formosa_calendar_to_apollo(ct);
 
         enable_ps2();
 
@@ -820,7 +820,7 @@ cmos_get_calendar_time :: () -> Basic.Calendar_Time {
     return cal;
 }
 
-theos_calendar_to_apollo :: (ct: Basic.Calendar_Time) -> Basic.Apollo_Time {
+formosa_calendar_to_apollo :: (ct: Basic.Calendar_Time) -> Basic.Apollo_Time {
     using Basic;
     leap_year_count := leap_years_before(cast(s64) ct.year - 1) - leap_years_before(1970);
     year_difference := cast(s64) ct.year - 1970;
@@ -853,7 +853,7 @@ theos_calendar_to_apollo :: (ct: Basic.Calendar_Time) -> Basic.Apollo_Time {
     return apollo;
 }
 
-theos_apollo_to_calendar :: (apollo: Basic.Apollo_Time) -> Basic.Calendar_Time {
+formosa_apollo_to_calendar :: (apollo: Basic.Apollo_Time) -> Basic.Calendar_Time {
     using Basic;
     APOLLO_TIME_FOR_JAN_1_1970 :: Basic.Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
     milliseconds := Basic.to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);

@@ -1,6 +1,6 @@
 
 #scope_module;
-Formosa :: #import "Theos";
+Formosa :: #import "Formosa";
 
 #scope_export;
 Window_Type :: Formosa.Window_Handle;

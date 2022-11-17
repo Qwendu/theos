@@ -23,7 +23,7 @@
         return result;
     }
 
-    theos_calendar_to_apollo :: (ct: Calendar_Time) -> Apollo_Time {
+    formosa_calendar_to_apollo :: (ct: Calendar_Time) -> Apollo_Time {
         leap_year_count := leap_years_before(cast(s64) ct.year - 1) - leap_years_before(1970);
         year_difference := cast(s64) ct.year - 1970;
 
@@ -58,7 +58,7 @@
     // Now                       1970    Moon landing                              0 AD
     // |-------------------------|-------|-----------------------------------------|
 
-    theos_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
+    formosa_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
         APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
         milliseconds := to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);
 
@@ -134,12 +134,12 @@
         apollo.high += xx random_get() % 45000;
 
         calendar_linux := to_calendar(apollo);
-        calendar_theos := theos_apollo_to_calendar(apollo);
+        calendar_formosa := formosa_apollo_to_calendar(apollo);
 
         attempts += 1;
-        if calendar_linux != calendar_theos {
+        if calendar_linux != calendar_formosa {
             failures += 1;
-            print("\nMismatch!!!\n=======================\nIndex: %\nLinux: %\nTheos: %\n", it, calendar_linux, calendar_theos);
+            print("\nMismatch!!!\n=======================\nIndex: %\nLinux: %\nFormosa: %\n", it, calendar_linux, calendar_formosa);
         }
     }
     print("Successes: %/%\n", (attempts - failures), attempts);
@@ -162,9 +162,9 @@
 //        cal.millisecond = xx (random_get() % 1000);
 //        
 //        apollo_linux := calendar_to_apollo(cal);
-//        apollo_theos := theos_calendar_to_apollo(cal);
-//        if apollo_linux != apollo_theos {
-//            print("=======================\nMismatch!!!\nIndex:%\nLinux: %\nTheos: %\nCalendar: %\n\n", it, apollo_linux, apollo_theos, cal);
+//        apollo_formosa := formosa_calendar_to_apollo(cal);
+//        if apollo_linux != apollo_formosa {
+//            print("=======================\nMismatch!!!\nIndex:%\nLinux: %\nFormosa: %\nCalendar: %\n\n", it, apollo_linux, apollo_formosa, cal);
 //        }
 //    }
 

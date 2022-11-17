@@ -95,7 +95,7 @@ update_shell :: () {
 
     if shell.foreground_task == *the_first_task || shell.command_text.point {
         time := get_system_time();
-        ct := theos_apollo_to_calendar(time);
+        ct := formosa_apollo_to_calendar(time);
         if xx (ct.millisecond > 500) == shell.command_text.point {
             shell.command_text.point = !shell.command_text.point;
             shell.command_text.draw.dirty = true;
@@ -332,7 +332,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             // calendar := cmos_get_calendar_time();
             // printf("The CMOS time is %.\n", Basic.calendar_to_string(calendar));
             // 
-            // calendar = theos_apollo_to_calendar(system_time);
+            // calendar = formosa_apollo_to_calendar(system_time);
             // printf("The SYSTEM time is %.\n", Basic.calendar_to_string(calendar));
             // return "";
 
@@ -911,14 +911,14 @@ print_ipc_data :: (value: Any) {
 
                     context.print_style.default_format_int.base = 10;
                     for it.notes {
-                        if it == "Theos.apollo" {
+                        if it == "Formosa.apollo" {
                             time: *Basic.Apollo_Time = xx thing.value_pointer;
-                            date := theos_apollo_to_calendar(<< time);
+                            date := formosa_apollo_to_calendar(<< time);
                             length = Basic.tprint("%", Basic.calendar_to_string(date)).count;
                             apollo = true;
                         }
 
-                        if it == "Theos.base16" {
+                        if it == "Formosa.base16" {
                             context.print_style.default_format_int.base = 16;
                         }
                     }
@@ -961,13 +961,13 @@ print_ipc_data :: (value: Any) {
                     to_print: string;
                     context.print_style.default_format_int.base = 10;
                     for it.notes {
-                        if it == "Theos.base16" {
+                        if it == "Formosa.base16" {
                             context.print_style.default_format_int.base = 16;
                         }
 
-                        if it == "Theos.apollo" {
+                        if it == "Formosa.apollo" {
                             time: *Basic.Apollo_Time = xx thing.value_pointer;
-                            date := theos_apollo_to_calendar(<< time);
+                            date := formosa_apollo_to_calendar(<< time);
                             to_print = Basic.tprint("%", Basic.calendar_to_string(date));
                             apollo = true;
                         }

@@ -1,6 +1,6 @@
 
 #import "Basic";
-#import "Theos";
+#import "Formosa";
 #import "Machine_X64";
 
 main :: () {

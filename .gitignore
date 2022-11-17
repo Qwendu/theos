@@ -1,7 +1,7 @@
 
 /.build/*
 /bochs state/*
-theos
+formosa
 *.lock
 modules/Basic/
 modules/File/
@@ -33,7 +33,7 @@ files/set_theme
 files/test_app
 files/the_great_adventure
 files/theme_maker
-files/theos
+files/formosa
 files/view_image
 files/time
 files/noise
