@@ -236,7 +236,7 @@ paint_screen :: () {
 
     screen_size := g.screen.width * g.screen.height * size_of(u32);
     memcpy(g.vesa_framebuffer, g.screen.buffer, xx screen_size);
-    move_mouse(mouse.position_x, mouse.position_y);
+    move_mouse(mouse.position_x, mouse.position_y, true);
 }
 
 old_mouse_x: int;
@@ -247,13 +247,12 @@ last_mouse_move: Basic.Apollo_Time;
 
 get_the_fucking_time :: get_system_time;
 
-move_mouse :: (new_x: int, new_y: int) {
+move_mouse :: (new_x: int, new_y: int, always := false) {
     if !do_mouse return;
 
     g := *graphics;
     cursor_size := 32;
 
-    // Fix this, this can be "wound up" more and more if you keep moving the mouse in the same direction
     while new_x + cursor_size > g.screen.width new_x -= g.screen.width;
     while new_y + cursor_size > g.screen.height new_y -= g.screen.height;
 
@@ -270,7 +269,7 @@ move_mouse :: (new_x: int, new_y: int) {
     if new_x != old_mouse_x || new_y != old_mouse_y {
         last_mouse_move = get_the_fucking_time();
     } else {
-        return;
+        if !always return;
     }
 
     // Clear the old location
@@ -300,8 +299,8 @@ move_mouse :: (new_x: int, new_y: int) {
             index += new_y * g.screen.width;
 
             // color : u32 = xx ifx black then theme.background else theme.accent;
-            g.vesa_framebuffer[index] = blend(theme.accent.as_u32, g.vesa_framebuffer[index], min(alpha + fade_s, 1));
-            g.vesa_framebuffer[index] = blend(theme.foreground.as_u32, g.vesa_framebuffer[index], min(border + fade_s, 1));
+            g.vesa_framebuffer[index] = blend(theme.accent.as_u32, g.vesa_framebuffer[index], min(alpha, 1));
+            g.vesa_framebuffer[index] = blend(theme.foreground.as_u32, g.vesa_framebuffer[index], min(border, 1));
 
             cursor += 3;
         }

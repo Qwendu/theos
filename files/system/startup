@@ -1,3 +1,4 @@
 
-view_image "pictures/parthenon.ppm"
-view_image "pictures/florence.ppm"
+set_theme mash
+formosa
+echo "Wie fleugt dahin der Menschen Zeit"

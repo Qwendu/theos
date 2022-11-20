@@ -107,9 +107,16 @@ kernel_entry :: () {
 
         pci_scan_all_devices();
         discover_mass_storage_devices();
-        assert(disks.count == 1, "You are having too much fun");
-        boot_drive = *disks[0];
-        // shutdown_emulator();
+
+        for *disks {
+            if it.controller_type == .IDE {
+                boot_drive = it;
+            }
+
+            if it.controller_type == .AHCI {
+                print("Found a sata drive\n");
+            }
+        }
 
         read_block = (block_index: int, block: *Disk_Block, *void) {
             location := FS_BASE_ADDRESS + block_index * FS_BLOCKSIZE;
@@ -1969,8 +1976,6 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             width := cast(int) data.rdi;
             height := cast(int) data.rcx;
             target := cast(*Window_Handle) data.rdx;
-
-            printf("Width: %, height: %\n", width, height);
 
             << target = create_window(width, height);
             paint_screen();

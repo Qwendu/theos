@@ -182,8 +182,8 @@ enable_ps2 :: () {
 
     layout := read_file(KEYBOARD_LAYOUT);
 
-    mouse.position_x = 800;
-    mouse.position_y = 800;
+    mouse.position_x = 0;
+    mouse.position_y = 0;
 
     count: int;
     for layout if it == #char "\n" {

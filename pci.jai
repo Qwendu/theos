@@ -272,10 +272,14 @@ Mass_Storage_Device :: struct {
     }
 
     Ahci :: struct {
-        command_list: [] Ahci_Command_Header;
+        command_list_base: *Ahci_Command_Header;
+        command_list_length: int;
         received_fis: *Ahci_Received_Fis;
+        port: *Ahci_Memory_Region.Port;
     }
 }
+
+// An AHCI command list is a contiguous list of command headers. Each command header points to a command table.
 
 disks: [] Mass_Storage_Device;
 
@@ -635,8 +639,10 @@ Ide_Register :: enum u16 {
 Ide_Command :: enum u8 {
     READ_PIO  :: 0x20;
     READ_DMA  :: 0xc8;
+    READ_DMA_EX :: 0x25;
     WRITE_PIO :: 0x30;
     WRITE_DMA :: 0xca;
+    WRITE_DMA_EX :: 0x35;
     IDENTIFY  :: 0xec;
 }
 
@@ -766,76 +772,136 @@ init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Devic
 
     // BARs 1 to 4 are used for IDE compatibility, 5 is the AHCI base address
     base, limit, io_space := pci_get_base_address(info, bar = 5);
-    assert(base != 0);
-    assert(!io_space);
+    assert((base != 0) && !io_space);
 
     using Page_Flags;
     uncacheable_flags := READ_WRITE | PRESENT | CACHE_DISABLE;
+
     m := map_memory(limit + 0x1000, physical_address = base, flags = uncacheable_flags);
     offset_in_page := base % 0x1000;
     ahci: *Ahci_Memory_Region = xx (m + offset_in_page);
 
-    cap := ahci.host_capabilities;
+    ahci.GHC__global_host_control |= .AE__ahci_enable;
 
-    ahci_only := cap & .SUPPORTS_AHCI_ONLY > 0;
-    if !ahci_only {
-        ahci.global_host_control |= 0x1;
+    assert(ahci.CAP__host_capabilities & .S64A__64bit_addressing > 0, "AHCI controller without 64bit addressing not supported");
+
+    if (ahci.CAP__host_capabilities & .SAM__supports_ahci_only) == 0 {
+        ahci.GHC__global_host_control |= .HR__hba_reset;
     }
 
-    num_ports := cast(int) (cap & 0b11111) + 1;
-    command_slot_count := cast(int) ((cap >> 8) & 0b11111) + 1; // Can't bit shift by an enum value
+    num_ports := cast(int) (ahci.CAP__host_capabilities & 0b11111) + 1;
+    command_slot_count := cast(int) ((ahci.CAP__host_capabilities >> 8) & 0b11111) + 1;
 
-    assert(cap & ._64BIT_ADDRESSING > 0, "AHCI controller without 64bit addressing not supported");
+    max_ports := 32;
 
-    for 0..num_ports - 1 {
-        assert(ahci.ports_implemented & (1 << it) > 0, "Implemented AHCI ports are not contiguous");
+    for 0..max_ports - 1 {
+        if ahci.PI__ports_implemented & (1 << it) == 0  continue;
+
         port := *ahci.ports[it];
+        if ahci_port_is_running(port) {
+            // Put in idle state
+            port.CMD__command_status &= ~.ST__start;
+            Timeout(#code {
+                if port.CMD__command_status & .CR__command_list_running == 0  break;
+            }, "AHCI port not idle timeout (command list running)");
 
-        assert(port.command_status & .SPIN_UP > 0, "AHCI port not spun up");
+            port.CMD__command_status &= ~.FRE__fis_receive_enable;
+            Timeout(#code {
+                if port.CMD__command_status & .FR__receive_running == 0  break;
+            }, "AHCI port not idle timeout (receive running)");
+        }
+    }
+
+    for 0..max_ports - 1 {
+        if ahci.PI__ports_implemented & (1 << it) == 0  continue;
+
+        port := *ahci.ports[it];
+        assert(port.CMD__command_status & .SUD__spin_up_device > 0, "AHCI port not spun up");
 
         // Don't know what to do in case of staggered spin up
-        // if ahci.host_capabilities & .STAGGERED_SPIN_UP > 0 {
+        // if ahci.CAP__host_capabilities & .STAGGERED_SPIN_UP > 0 {
         // }
 
-        detection := port.sata_status & 0xf;
-        power_mgmt := (port.sata_status >> 8) & 0xf;
+        detection := port.SSTS__sata_status & 0xf;
         if detection != SSTS_DET_ESTABLISHED continue;
-        assert(power_mgmt == SSTS_IPM_ACTIVE);
 
-        assert(port.signature == .ATA, "AHCI: We only handle the \"ATA\" device signature");
+        power_mgmt := (port.SSTS__sata_status >> 8) & 0xf;
+        assert(power_mgmt == SSTS_IPM_ACTIVE, "AHCI port power management interface state is not active. See 3.3.10 (PxSSTS)");
+
+        assert(port.SIG__signature == .ATA, "AHCI: We only handle the \"ATA\" device signature");
 
         // Allocate received FIS and command list for this port
         dev: Mass_Storage_Device.Ahci;
 
-        dev.command_list.data = map_memory(size_of(Ahci_Command_Header) * command_slot_count, flags = uncacheable_flags);
-        dev.command_list.count = command_slot_count;
+        dev.command_list_base = map_memory(size_of(Ahci_Command_Header) * command_slot_count, flags = uncacheable_flags);
+        dev.command_list_length = command_slot_count;
         dev.received_fis = map_memory(size_of(Ahci_Received_Fis), flags = uncacheable_flags);
+        dev.port = port;
 
-        port.command_list_base = get_physical_address(dev.command_list.data);
-        port.fis_base = get_physical_address(dev.received_fis);
-
-        table_region: *Ahci_Command_Table = map_memory(size_of(Ahci_Command_Table) * command_slot_count);
-        assert(xx table_region % 128 == 0);
+        port.CLB__command_list_base = get_physical_address(dev.command_list_base);
+        port.FB__fis_base = get_physical_address(dev.received_fis);
 
         for 0..command_slot_count - 1 {
-            header := *dev.command_list[it];
-            header.command_table_base = xx (table_region + it);
+            table := cast(*Ahci_Command_Table) map_memory(size_of(Ahci_Command_Table));
+            assert(xx table % 128 == 0);
+
+            header := dev.command_list_base + it;
+            header.CTBA__command_table_base = xx get_physical_address(table);
         }
 
-        using Ahci_Port_Command_Status;
-        port.command_status |= START | FIS_RECEIVE_ENABLE;
+        port.CMD__command_status |= .FRE__fis_receive_enable;
+        Timeout(#code {
+            if port.CMD__command_status & .FR__receive_running > 0  break;
+        }, "AHCI port idle timeout (receive running)");
+
+        port.CMD__command_status |= .ST__start;
+        Timeout(#code {
+            if port.CMD__command_status & .CR__command_list_running > 0  break;
+        }, "AHCI port idle timeout (command list running)");
 
         // Issue IDENTIFY
-        fis: Ahci_Command_Fis;
-        fis.command = xx Ide_Command.IDENTIFY;
+        // fis: AHCI_FIS_Command;
+        // fis.command = xx Ide_Command.IDENTIFY;
+        // fis.flags = .IS_COMMAND;
+
+        // memory_for_command_tables[0].CFIS__command_fis = fis;
+
+        // Read test:
+        fis: AHCI_FIS_Command;
         fis.flags = .IS_COMMAND;
+        fis.command = xx Ide_Command.READ_DMA_EX;
+        fis.device = 1 << 6;
+        fis.sectors_low = 1;
 
-        table_region[0].fis = fis;
+        table := cast(*Ahci_Command_Table) to_virtual(dev.command_list_base.CTBA__command_table_base);
+        table.CFIS__command_fis = fis;
 
-        assert(port.command_issue & 0x1 == 0);
-        port.command_issue |= 0x1;
+        dev.command_list_base.PRDTL__prd_table_length = 1;
+        dev.command_list_base.PRDBC__prd_byte_count = size_of(Ahci_PRDT);
+        dev.command_list_base.flags = size_of(AHCI_FIS_Command) / 4;
 
-        // Read identification space
+        buffer := map_memory(0x2_0000);
+        buffer += 0x1_0000 - (cast(u64) buffer % 0x1_0000);
+
+        prdt := *table.PRDT__physical_region_descriptor_table[0];
+        prdt.DBA__data_base_address = get_physical_address(buffer);
+        prdt.DBC__data_byte_count = 0x1ff;
+        // prdt.I__interrupt_on_completion = .NO;
+
+        assert(port.CI__command_issue & 0x1 == 0);
+        port.CI__command_issue |= 0x1;
+
+        Timeout(#code {
+            if !(port.CI__command_issue & 0x1)  break;
+        }, "Read timeout\n", time = 10_000);
+
+        HexMode();
+        a: string;
+        a.data = xx buffer;
+        a.count = 512;
+        for cast([] u8) a {
+            print_hex(it, decorate = false);
+        }
 
         msd := Basic.array_add(drives);
         msd.controller_type = .AHCI;
@@ -843,39 +909,42 @@ init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Devic
     }
 }
 
-Ahci_Command_Fis :: struct {
-    fis_type: Fis_Type = .REGISTER_H2D;
-    flags: enum u8 { NONE :: 0x0; IS_COMMAND :: 0x80; };
-    command: u8;
-    features_low: u8;
-    lba_low: u8;
-    lba_mid: u8;
-    lba_high: u8;
-    device: u8;
-    lba_really_high: u8;
-    lba_super_high: u8;
-    lba_super_duper_high: u8;
-    features_high: u8;
-    sector_count_low: u8;
-    sector_count_high: u8;
-    icc: u8;
-    control: u8;
-    reserved: u32;
+ahci_port_is_running :: (port: *Ahci_Memory_Region.Port) -> bool {
+    return (port.CMD__command_status & .ST__start)
+        || (port.CMD__command_status & .CR__command_list_running)
+        || (port.CMD__command_status & .FRE__fis_receive_enable)
+        || (port.CMD__command_status & .FR__receive_running);
+}
+
+ahci_read :: (dev: *Mass_Storage_Device, buffer: *void, bytes: int, disk_address: int) {
+
 }
 
 Ahci_Command_Header :: struct {
     flags: u16;
-    prd_table_length: u16;
-    prd_byte_count: u32;
-    command_table_base: u64;
+    PRDTL__prd_table_length: u16;
+    PRDBC__prd_byte_count: u32;
+    CTBA__command_table_base: u64;
+
     reserved: [4] u32;
 }
 
 Ahci_Command_Table :: struct {
-    fis: Ahci_Command_Fis;
-    reserved_1: [0x40 - size_of(Ahci_Command_Fis)] u8;
-    atapi: [0x10] u8;
-    reserved_2: [0x30] u8;
+    CFIS__command_fis: AHCI_FIS_Command;
+    RSV0__reserved: [0x2c] u8;
+    ACMD__atapi_command: [0x10] u8;
+    RSV1__reserved: [0x30] u8;
+
+    PRDT__physical_region_descriptor_table: [1 /* 65_535 */] Ahci_PRDT;
+}
+
+Ahci_PRDT :: struct {
+    DBA__data_base_address: u64;
+    reserved: u32;
+    DBC__data_byte_count: u32;
+
+#place DBC__data_byte_count;
+    I__interrupt_on_completion: enum u32 { NO; YES :: 0x8000_0000; };
 }
 
 Fis_Type :: enum u8 {
@@ -891,29 +960,42 @@ Fis_Type :: enum u8 {
 }
 
 Ahci_Received_Fis :: struct {
-    dma_setup: struct {
-
-        fis: [0x20] u8;
-    };
-
-    pio_setup: struct {
-
-        fis: [0x20] u8;
-    };
-
-    d2h_register: Ahci_Command_Fis = .{
-        fis_type = .REGISTER_D2H,
-    };
-
-    device_bits: u64;
-    unknown: struct {
-        fis: [64] u8;
-    };
+    DSFIS__dma_setup: [0x20] u8;
+    PSFIS__pio_setup: [0x20] u8;
+    RFIS__d2h_register: AHCI_FIS_Command = .{ fis_type = .REGISTER_D2H };
+    SDBFIS__set_device_bits: u64;
+    UFIS__unknown: [64] u8;
 
     reserved: [0x60] u8;
 }
 
-Ahci_Signature :: enum u32 {
+#assert size_of(Ahci_Received_Fis) == (0x100);
+
+AHCI_FIS_Command :: struct {
+    fis_type := Fis_Type.REGISTER_H2D;
+    flags: enum u8 { NONE :: 0x0; IS_COMMAND :: 0x80; };
+    command: u8;
+    features0: u8;
+
+    lba_0: u8;
+    lba_1: u8;
+    lba_2: u8;
+    device: u8;
+
+    lba_3: u8;
+    lba_4: u8;
+    lba_5: u8;
+    features1: u8;
+
+    sectors_low: u8;
+    sectors_high: u8;
+    icc: u8;
+    control: u8;
+
+    reserved: u32;
+}
+
+HBA_PxSIG__Ahci_Port_Signature :: enum u32 {
     ATA   :: 0x0000_0101;
     ATAPI :: 0xeb14_0101;
     SEMB  :: 0xc33c_0101;
@@ -921,17 +1003,17 @@ Ahci_Signature :: enum u32 {
 }
 
 Ahci_Memory_Region :: struct {
-    host_capabilities:     Ahci_Capabilities;
-    global_host_control:   u32;
-    interrupt_status:      u32;
-    ports_implemented:     u32;
-    version:               u32;
-    ccc_control:           u32;
-    ccc_ports:             u32;
-    enclosure_mgmt_loc:    u32;
-    enclosure_mgmt_ctl:    u32;
-    ext_host_capabilities: u32;
-    bios_handoff_ctl_stat: u32;
+    CAP__host_capabilities:      HBA_CAP__Ahci_Capabilities;
+    GHC__global_host_control:    HBA_GHC__Ahci_Global_Host_Control;
+    IS__interrupt_status:        u32;
+    PI__ports_implemented:       u32;
+    VS__version:                 u32;
+    CCC_CTL__command_completion_coalescing_control: u32;
+    CCC_PTS__command_completion_coalescing_ports:   u32;
+    EM_LOC__enclosure_mgmt_location:        u32;
+    EM_CTL__enclosure_mgmt_control:         u32;
+    CAP2__extended_host_capabilities:       u32;
+    BOHC__bios_handoff_control_and_status:  u32;
 
     reserved: [0xa0 - 0x2c] u8;
     vendor_specific: [0x100 - 0xa0] u8;
@@ -939,110 +1021,69 @@ Ahci_Memory_Region :: struct {
     /* #no_abc */ ports: [32] Port;
 
     Port :: struct {
-        command_list_base: u64 #align 4;
-        fis_base: u64 #align 4;
-        interrupt_status: u32;
-        interrupt_enable: u32;
-        command_status: Ahci_Port_Command_Status;
-        reserved: u32;
-        task_file_data: u32;
-        signature: Ahci_Signature; /* struct {
-            // Why does the spec say the signature has this structure?
-            sector_count: u8;
-            lba_low: u8;
-            lba_mid: u8;
-            lba_high: u8;
-        }; */
-
-        sata_status: u32;
-        sata_control: u32;
-        sata_error: u32;
-        sata_active: u32;
-        command_issue: u32;
-        sata_notif: u32;
-        fis_based_switching_control: u32;
+        CLB__command_list_base: u64 #align 4;
+        FB__fis_base: u64 #align 4;
+        IS__interrupt_status: u32;
+        IE__interrupt_enable: u32;
+        CMD__command_status: HBA_PxCMD__Ahci_Port_Command_Status;
+        RSV0__reserved: u32;
+        TFD__task_file_data: u32;
+        SIG__signature: HBA_PxSIG__Ahci_Port_Signature;
+        SSTS__sata_status: u32;
+        SCTL__sata_control: u32;
+        SERR__sata_error: u32;
+        SACT__sata_active: u32;
+        CI__command_issue: u32;
+        SNTF__sata_notif: u32;
+        FNS__fis_based_switching_control: u32;
         device_sleep: u32;
 
-        reserved_2: [0x70 - 0x48] u8;
+        RSV1__reserved: [0x70 - 0x48] u8;
         vendor_specific: [16] u8;
     }
 }
 
 #assert(size_of(Ahci_Command_Header) == 0x20);
-#assert(size_of(Ahci_Command_Table) == 0x80);
+#assert(size_of(Ahci_Command_Table) == 0x80 + size_of(Ahci_PRDT));
 #assert(size_of(Ahci_Memory_Region.Port) == 0x80);
 #assert(size_of(Ahci_Received_Fis) == 0x100);
-#assert(Ahci_Port_Command_Status.INTERFACE_COMMUNICATION_CONTROL_BIT3 == 0x8000_0000);
 
-Ahci_Capabilities :: enum_flags u32 {
-    PORT_COUNT_BIT0;
-    PORT_COUNT_BIT1;
-    PORT_COUNT_BIT2;
-    PORT_COUNT_BIT3;
-    PORT_COUNT_BIT4;
-    EXTERNAL_SATA;
-    ENCLOSURE_MGMT;
-    CCC;
-    COMMAND_SLOT_COUNT_BIT0;
-    COMMAND_SLOT_COUNT_BIT1;
-    COMMAND_SLOT_COUNT_BIT2;
-    COMMAND_SLOT_COUNT_BIT3;
-    COMMAND_SLOT_COUNT_BIT4;
-    PARTIAL_STATE;
-    SLUMBER_STATE;
-    PIO_MULTIPLE_DRQ;
-    FIS_BASED_SWITCHING;
-    PORT_MULTIPLIER;
-    SUPPORTS_AHCI_ONLY;
-    RESERVED;
-    INTERFACE_SPEED_BIT0;
-    INTERFACE_SPEED_BIT1;
-    INTERFACE_SPEED_BIT2;
-    INTERFACE_SPEED_BIT3;
-    COMMAND_LIST_OVERRIDE;
-    ACTIVITY_LED;
-    AGGRESSIVE_LINK_POWER_MGMT;
-    STAGGERED_SPIN_UP;
-    MECHANICAL_PRESENCE_SWITCH;
-    S_NOTIFICATION_REGISTER;
-    NATIVE_COMMAND_QUEUEUUEUEING;
-    _64BIT_ADDRESSING;
+HBA_GHC__Ahci_Global_Host_Control :: enum_flags u32 {
+    HR__hba_reset                      :: 0x1;
+    IE__interrrupt_enable              :: 0x2;
+    MSRM__msi_revert_to_single_message :: 0x4;
+    AE__ahci_enable                    :: 0x8000_0000;
 }
 
-Ahci_Port_Command_Status :: enum_flags u32 {
-    START;
-    SPIN_UP;
-    POWER_ON;
-    COMMAND_LIST_OVERRIDE;
-    FIS_RECEIVE_ENABLE;
-    RESERVED_BIT0;
-    RESERVED_BIT1;
-    RESERVED_BIT2;
-    CURRENT_COMMAND_SLOT_BIT0;
-    CURRENT_COMMAND_SLOT_BIT1;
-    CURRENT_COMMAND_SLOT_BIT2;
-    CURRENT_COMMAND_SLOT_BIT3;
-    CURRENT_COMMAND_SLOT_BIT4;
-    MECHANICAL_PRESENCE_SWITCH_STATE;
-    FIS_RECEIVE_RUNNING;
-    COMMAND_LIST_RUNNING;
-    COLD_PRESENCE_STATE;
-    PORT_MULTIPLIER_ATTACHED;
-    HOT_PLUG_CAPABLE_PORT;
-    MECHANICAL_PRESENSE_SWITCH_ATTACHED_TO_PORT;
-    COLD_PRESENCE_DETECTION;
-    EXTERNAL_SATA_PORT;
-    FIS_BASED_SWITCHING_CAPABLE;
-    AUTOMATIC_PARTIAL_TO_SLUMBER_TRANSITIONS_ENABLED;
-    DEVICE_IS_ATAPI;
-    DRIVE_LED_ON_ATAPI_ENABLE;
-    AGGRESSIVE_LINK_POWER_MANAGEMENT_ENABLE;
-    AGGRESSIVE_SLUMBER_AND_PARTIAL;
-    INTERFACE_COMMUNICATION_CONTROL_BIT0;
-    INTERFACE_COMMUNICATION_CONTROL_BIT1;
-    INTERFACE_COMMUNICATION_CONTROL_BIT2;
-    INTERFACE_COMMUNICATION_CONTROL_BIT3;
+HBA_CAP__Ahci_Capabilities :: enum_flags u32 {
+    SAM__supports_ahci_only :: 0x4_0000;
+    S64A__64bit_addressing :: 0x8000_0000;
 }
+
+HBA_PxSSTS__Ahci_Port_Sata_Status :: enum u32 {
+    DET__device_detection   :: 0b0000_0000_1111;
+    SPD__interface_speed    :: 0b0000_1111_0000;
+    IPM__power_management   :: 0b1111_0000_0000;
+}
+
+HBA_PxCMD__Ahci_Port_Command_Status :: enum_flags u32 {
+    ST__start                 :: 0x1;
+    SUD__spin_up_device       :: 0x2;
+    FRE__fis_receive_enable   :: 0x10;
+    FR__receive_running       :: 0x4000;
+    CR__command_list_running  :: 0x8000;
+}
+
+
+
+
+
+
+
+
+
+
+
 
 
 
