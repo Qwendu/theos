@@ -24,7 +24,6 @@ exceptions: [] struct {
     .{ "Invalid TSS",                      0x0a, true  },
     .{ "Segment not present",              0x0b, true  },
     .{ "Stack segment fault",              0x0c, true  },
-    .{ "General protection fault",         0x0d, true  },
 //  .{ "Page fault",                       0x0e, true  },
     .{ "Floating point exception",         0x10, false },
     .{ "Alignment check fault",            0x11, true  },
@@ -39,6 +38,7 @@ interrupt_handlers: [] struct {
     handler: string;
     slot: int;
 } = .[
+    .{ "gp_exception", 0x0d },
     .{ "pit_interrupt",  0x20 },
     .{ "ps2_interrupt",  0x21 },
     .{ "cmos_interrupt", 0x28 },
@@ -473,9 +473,10 @@ interrupt_handlers: [] struct {
 }
 
 virtualbox :: () {
-    shell("VBoxManage storageattach formosa --storagectl PIIX4 --port 0 --medium none --device 0");
+    shell("VBoxManage controlvm formosa poweroff");
+    shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
     shell("VBoxManage closemedium formosa.vdi");
-    shell("VBoxManage storageattach formosa --storagectl PIIX4 --port 0 --medium formosa.vdi --device 0 --type hdd");
+    shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium formosa.vdi --device 0 --type hdd");
     shell("VBoxManage modifyvm formosa --hpet on");
     shell("VBoxManage setextradata formosa GUI/DefaultCloseAction PowerOff");
     shell("VBoxManage startvm formosa");
@@ -666,18 +667,19 @@ using Basic :: #import "Basic";
 
 
 ISR_DECLARATION :: #string ISR
-isr_slot_0x% :: () #no_call {
+isr_slot_0x% :: (stack_data: *Interrupt_Data) #c_call {
+    stack_data = xx (cast(*u8) stack_data + 8);
     c: Context;
     push_context c {
         print("\n\n   An exception has occurred:  ", theme.primary);
         print("%\n", theme.accent);
 
-        // print("\n   Interrupt frame:\n");
-        // print("   RIP:    "); print_hex(stack_data.ip);    print("\n");
-        // print("   CS:     "); print_hex(stack_data.cs);    print("\n");
-        // print("   FLAGS:  "); print_hex(stack_data.flags); print("\n");
-        // print("   SP:     "); print_hex(stack_data.sp);    print("\n");
-        // print("   SS:     "); print_hex(stack_data.ss);    print("\n");
+        print("\n   Interrupt frame:\n");
+        print("   RIP:    "); print_hex(stack_data.ip);    print("\n");
+        print("   CS:     "); print_hex(stack_data.cs);    print("\n");
+        print("   FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("   SP:     "); print_hex(stack_data.sp);    print("\n");
+        print("   SS:     "); print_hex(stack_data.ss);    print("\n");
 
         #if ENABLE_VESA paint_screen();
     }

@@ -240,20 +240,22 @@ find_entry :: (path: [] string) -> Entry_Loc, bool {
     return loc, true;
 }
 
-create_entry :: (path_string: string, directory: bool) -> bool {
+create_entry :: (path_string: string, directory: bool) -> Filesystem_Result {
     defer flush_filesystem();
 
     path := parse_path(path_string);
-    assert(path.count > 0);
+    if path.count == 0 {
+        return .invalid_name;
+    }
 
     existing_loc, existing_success := find_entry(path);
-    if existing_success return false;
+    if existing_success return .item_already_exists;
 
     name := path[path.count - 1];
     path.count -= 1;
 
     entry_loc, success := find_entry(path);
-    if !success return false;
+    if !success return .item_doesnt_exist;
 
     block := cast(*Directory_Entry) alloc(FS_BLOCKSIZE);
     defer free(block);
@@ -302,7 +304,7 @@ create_entry :: (path_string: string, directory: bool) -> bool {
         new_entry.modified = now; 
     }
 
-    return true;
+    return .success;
 }
 
 
@@ -328,21 +330,29 @@ read_block: (block_index: int, block: *Disk_Block, user: *void);
 write_block: (block_index: int, block: *Disk_Block, user: *void);
 get_time: (user: *void) -> Apollo_Time;
 
-create_file :: (name: string) {
-    create_entry(name, false);
+Filesystem_Result :: enum s64 {
+    success :: 0;
+    item_doesnt_exist :: 1;
+    item_already_exists :: 2;
+    invalid_name :: 3;
+    item_is_wrong_kind :: 4;
 }
 
-write_file :: (path: string, data: [] u8) {
+create_file :: (name: string) -> Filesystem_Result {
+    return create_entry(name, false);
+}
+
+write_file :: (path: string, data: [] u8) -> Filesystem_Result {
     defer flush_filesystem();
 
     loc, success := find_entry(parse_path(path));
-    assert(success);
+    if !success return .item_doesnt_exist;
 
     block := alloc(FS_BLOCKSIZE);
     read_block(loc.directory_block, block, fs_user_data);
 
     dir_entry := cast(*Directory_Entry) block + loc.directory_index;
-    if dir_entry.flags & .DIRECTORY return;
+    if dir_entry.flags & .DIRECTORY return .item_is_wrong_kind;
 
     remaining := data.count;
     for *dir_entry.extents {
@@ -359,19 +369,21 @@ write_file :: (path: string, data: [] u8) {
 
     write_block(loc.directory_block, block, fs_user_data);
     free(block);
+
+    return .success;
 }
 
-read_file :: (path: string) -> [] u8 {
+read_file :: (path: string) -> [] u8, Filesystem_Result {
     defer flush_filesystem();
 
     loc, success := find_entry(parse_path(path));
-    if !success return .[];
+    if !success return .[], .item_doesnt_exist;
 
     block := alloc(FS_BLOCKSIZE);
     read_block(loc.directory_block, block, fs_user_data);
 
     dir_entry := cast(*Directory_Entry) block + loc.directory_index;
-    if dir_entry.flags & .DIRECTORY return .[];
+    if dir_entry.flags & .DIRECTORY return .[], .item_is_wrong_kind;
 
     data := alloc(dir_entry.file_size);
     remaining := dir_entry.file_size;
@@ -391,7 +403,7 @@ read_file :: (path: string) -> [] u8 {
     result.count = dir_entry.file_size;
 
     free(block);
-    return result;
+    return result, .success;
 }
 
 Directory_Entry_Info :: struct {
@@ -402,19 +414,19 @@ Directory_Entry_Info :: struct {
     file_size_or_entry_count_if_directory: int;
 }
 
-list_directory :: (path: string) -> [] Directory_Entry_Info {
+list_directory :: (path: string) -> [] Directory_Entry_Info, Filesystem_Result {
     defer flush_filesystem();
 
     block := cast(*Directory_Entry) alloc(FS_BLOCKSIZE);
     defer free(block);
 
     entry_loc, success := find_entry(parse_path(path));
-    if !success return .[];
+    if !success return .[], .item_doesnt_exist;
 
     read_block(entry_loc.directory_block, xx block, fs_user_data);
 
     entry := block + entry_loc.directory_index;
-    if !entry.extents[0].block_count return .[];
+    if !entry.extents[0].block_count return .[], .success;
 
     directory := cast(*Directory_Entry) alloc(FS_BLOCKSIZE);
     defer free(directory);
@@ -437,7 +449,7 @@ list_directory :: (path: string) -> [] Directory_Entry_Info {
         else info.type = .FILE;
     }
 
-    return result;
+    return result, .success;
 }
 
 get_root :: () -> *Directory_Entry {

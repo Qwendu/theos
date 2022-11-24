@@ -1,4 +1,4 @@
-
+ 
 #import "Formosa";
 #import "Formosa_Utilities";
 
@@ -36,23 +36,18 @@ Player_Kind :: enum {
     HUMAN;
 }
 
-// Command_Line_Arguments :: struct {
-//     white_pieces: Player_Kind;
-//     black_pieces: Player_Kind;
-//     depth: int;
-// } @Formosa.ProgramParameters
-
 main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
-    // using args: Command_Line_Arguments;
-    // Formosa.get_program_parameters(*args);
-
-    write_string("This program will fail. (redzone in the c library)\n");
-    repaint();
 
     has_computer_player := (white_pieces == .CPU || black_pieces == .CPU);
 
-    if has_computer_player{
-        nn := read_file("chess_res/nn-04cf2b4ed1da.nnue");
+    repaint();
+
+    if has_computer_player {
+        nn, result := read_file("chess_res/nn-04cf2b4ed1da.nnue");
+        if result != .success {
+            write_string("Could not load neural network... exiting.\n");
+            return;
+        }
         defer unmap_memory(nn.count, nn.data);
         nnue_init(nn);
     }
@@ -73,7 +68,12 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
         chess_startpos(*chess);
     }
 
-    pieces_pnm := read_file("chess_res/chess_pieces.ppm");
+    pieces_pnm, result := read_file("chess_res/chess_pieces.ppm");
+    if result != .success {
+        write_string("File could not be loaded: chess_res/chess_pieces.ppm\n");
+        return;
+    }
+
     pieces = parse_pnm(pieces_pnm);
     window_handle := create_window(window_size, window_size);
     window = get_window_buffer(window_handle);
@@ -169,13 +169,15 @@ write_fen :: () {
     ct := formosa_apollo_to_calendar(apollo);
     filename := tprint("chess_res/games/%1%2%3", ct.hour, ct.minute, ct.second);
 
-    // Fix this dumbass API
     create_file(filename);
 
     content: string;
     content.data = space.data;
     content.count = cursor;
-    write_file(filename, xx content);
+    result := write_file(filename, xx content);
+    if result != .success {
+        write_string("Failed to save game! Could not write file.\n");
+    }
 }
 
 white_to_move: bool;
@@ -311,7 +313,7 @@ human_move :: () -> bool {
                 repaint();
                 need_repaint = false;
             }
-            yield();
+            // yield();
         }
     }
 }

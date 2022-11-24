@@ -76,7 +76,7 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
     stack.flags = 0x200;
     stack.cs = 0x08;
     stack.ss = 0x10;
-    stack.sp = xx task.stack_bottom;
+    stack.sp = xx (task.stack_bottom - 8);
     task.rsp = xx stack;
 
     task.next = current_task.next;

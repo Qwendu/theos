@@ -214,6 +214,7 @@ pci_print_device_list :: () {
         Class: Pci_Class_Code;
         Subclass: string;
         Address: struct { bus, device, function: int; };
+        IF: u8; @Formosa.base16
     }
 
     list: [..] Pci;
@@ -226,6 +227,7 @@ pci_print_device_list :: () {
         device_info := pci_device_info[it];
         new := Basic.array_add(*list);
         new.Class = device_info.header.class_code;
+        new.IF = device_info.header.prog_if;
 
         if new.Class < 0x10 {
             class := PCI_SUBCLASSES[new.Class];
@@ -284,17 +286,21 @@ Mass_Storage_Device :: struct {
 disks: [] Mass_Storage_Device;
 
 read_mass_storage :: (dev: *Mass_Storage_Device, buffer: *void, bytes: int, disk_address: int) {
-    assert(dev.controller_type == .IDE);
-    assert(dev.supports_busmastering);
-
-    ide_dma_transfer(dev, .READ, xx buffer, xx bytes, xx disk_address);
+    if dev.controller_type == .IDE {
+        assert(dev.supports_busmastering);
+        ide_dma_transfer(dev, .READ, xx buffer, xx bytes, xx disk_address);
+    } else if dev.controller_type == .AHCI {
+        ahci_transfer(dev, .READ, xx buffer, xx bytes, xx disk_address);
+    }
 }
 
 write_mass_storage :: (dev: *Mass_Storage_Device, buffer: *void, bytes: int, disk_address: int) {
-    assert(dev.controller_type == .IDE);
-    assert(dev.supports_busmastering);
-
-    ide_dma_transfer(dev, .WRITE, xx buffer, xx bytes, xx disk_address);
+    if dev.controller_type == .IDE {
+        assert(dev.supports_busmastering);
+        ide_dma_transfer(dev, .WRITE, xx buffer, xx bytes, xx disk_address);
+    } else if dev.controller_type == .AHCI {
+        ahci_transfer(dev, .WRITE, xx buffer, xx bytes, xx disk_address);
+    }
 }
 
 
@@ -313,7 +319,6 @@ discover_mass_storage_devices :: () {
         info := pci_device_info[device];
         if info.header.class_code != .MASS_STORAGE continue;
 
-        // Subclass 0x1 (IDE) might be compatible with subclass 0x5 (ATA), but I am not sure
         if info.header.subclass == PCI_SUBCLASS_IDE {
             init_ide_controller(info, *discovered);
         }
@@ -420,12 +425,12 @@ Physical_Region_Descriptor :: struct {
 
 #assert(size_of(Physical_Region_Descriptor) == 8);
 
-Ide_Transfer_Direction :: enum {
+Transfer_Direction :: enum {
     READ;
     WRITE;
 }
 
-ide_dma_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, physical: u64, sector_lba: u32, sector_count: int) {
+ide_dma_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Transfer_Direction, physical: u64, sector_lba: u32, sector_count: int) {
     using Ide_Register;
     using Pci_Bus_Master_Port;
 
@@ -487,7 +492,7 @@ ide_dma_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_
     }, "ATA DMA transfer timeout");
 }
 
-ide_dma_transfer :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, memory_address: *void, number_of_bytes: u64, disk_address: u64, call_site := #caller_location) {
+ide_dma_transfer :: (dev: *Mass_Storage_Device, direction: Transfer_Direction, memory_address: *void, number_of_bytes: u64, disk_address: u64, call_site := #caller_location) {
     assert(cast(u64) memory_address % 0x200 == 0);
 
     assert(dev.controller_type == .IDE);
@@ -516,7 +521,7 @@ ide_dma_transfer :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Directio
     ide_dma_transfer_old(dev, direction, target, xx lba, xx sector_count);
 }
 
-ide_dma_transfer_old :: (dev: *Mass_Storage_Device, direction: Ide_Transfer_Direction, physical: u64, sector_lba: u32, sector_count: int) {
+ide_dma_transfer_old :: (dev: *Mass_Storage_Device, direction: Transfer_Direction, physical: u64, sector_lba: u32, sector_count: int) {
     using Ide_Register;
     using Pci_Bus_Master_Port;
     if !sector_count return;
@@ -765,12 +770,11 @@ SSTS_IPM_ACTIVE :: 0x1;
 init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device) {
     context.print_style.default_format_struct.use_newlines_if_long_form = true;
 
-    // command_status := pci_read_config_register(info, 0x1);
-    // command_status |= xx (Pci_Command.BUS_MASTER | .MEMORY_SPACE);
+    command_status := pci_read_config_register(info, 0x1);
+    command_status |= xx (Pci_Command.BUS_MASTER | .MEMORY_SPACE);
     // command_status &= xx ~.INTERRUPT_DISABLE;
-    // pci_write_config_register(info, 0x1, xx command_status);
+    pci_write_config_register(info, 0x1, xx command_status);
 
-    // BARs 1 to 4 are used for IDE compatibility, 5 is the AHCI base address
     base, limit, io_space := pci_get_base_address(info, bar = 5);
     assert((base != 0) && !io_space);
 
@@ -799,7 +803,7 @@ init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Devic
 
         port := *ahci.ports[it];
         if ahci_port_is_running(port) {
-            // Put in idle state
+
             port.CMD__command_status &= ~.ST__start;
             Timeout(#code {
                 if port.CMD__command_status & .CR__command_list_running == 0  break;
@@ -818,7 +822,6 @@ init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Devic
         port := *ahci.ports[it];
         assert(port.CMD__command_status & .SUD__spin_up_device > 0, "AHCI port not spun up");
 
-        // Don't know what to do in case of staggered spin up
         // if ahci.CAP__host_capabilities & .STAGGERED_SPIN_UP > 0 {
         // }
 
@@ -830,7 +833,6 @@ init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Devic
 
         assert(port.SIG__signature == .ATA, "AHCI: We only handle the \"ATA\" device signature");
 
-        // Allocate received FIS and command list for this port
         dev: Mass_Storage_Device.Ahci;
 
         dev.command_list_base = map_memory(size_of(Ahci_Command_Header) * command_slot_count, flags = uncacheable_flags);
@@ -859,50 +861,6 @@ init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Devic
             if port.CMD__command_status & .CR__command_list_running > 0  break;
         }, "AHCI port idle timeout (command list running)");
 
-        // Issue IDENTIFY
-        // fis: AHCI_FIS_Command;
-        // fis.command = xx Ide_Command.IDENTIFY;
-        // fis.flags = .IS_COMMAND;
-
-        // memory_for_command_tables[0].CFIS__command_fis = fis;
-
-        // Read test:
-        fis: AHCI_FIS_Command;
-        fis.flags = .IS_COMMAND;
-        fis.command = xx Ide_Command.READ_DMA_EX;
-        fis.device = 1 << 6;
-        fis.sectors_low = 1;
-
-        table := cast(*Ahci_Command_Table) to_virtual(dev.command_list_base.CTBA__command_table_base);
-        table.CFIS__command_fis = fis;
-
-        dev.command_list_base.PRDTL__prd_table_length = 1;
-        dev.command_list_base.PRDBC__prd_byte_count = size_of(Ahci_PRDT);
-        dev.command_list_base.flags = size_of(AHCI_FIS_Command) / 4;
-
-        buffer := map_memory(0x2_0000);
-        buffer += 0x1_0000 - (cast(u64) buffer % 0x1_0000);
-
-        prdt := *table.PRDT__physical_region_descriptor_table[0];
-        prdt.DBA__data_base_address = get_physical_address(buffer);
-        prdt.DBC__data_byte_count = 0x1ff;
-        // prdt.I__interrupt_on_completion = .NO;
-
-        assert(port.CI__command_issue & 0x1 == 0);
-        port.CI__command_issue |= 0x1;
-
-        Timeout(#code {
-            if !(port.CI__command_issue & 0x1)  break;
-        }, "Read timeout\n", time = 10_000);
-
-        HexMode();
-        a: string;
-        a.data = xx buffer;
-        a.count = 512;
-        for cast([] u8) a {
-            print_hex(it, decorate = false);
-        }
-
         msd := Basic.array_add(drives);
         msd.controller_type = .AHCI;
         msd.ahci = dev;
@@ -916,8 +874,83 @@ ahci_port_is_running :: (port: *Ahci_Memory_Region.Port) -> bool {
         || (port.CMD__command_status & .FR__receive_running);
 }
 
-ahci_read :: (dev: *Mass_Storage_Device, buffer: *void, bytes: int, disk_address: int) {
+ahci_transfer :: (dev: *Mass_Storage_Device, direction: Transfer_Direction, memory_address: *void, number_of_bytes: u64, disk_address: u64, call_site := #caller_location) {
+    assert(cast(u64) memory_address % 0x200 == 0);
 
+    assert(dev.controller_type == .AHCI);
+
+    target, present := get_physical_address(memory_address);
+    assert(present);
+    sector_count : u64 = (number_of_bytes + 0x1ff) / 0x200;
+    lba          : u64 = (disk_address    + 0x1ff) / 0x200;
+
+    if sector_count == 0 return;
+
+    first_sector_count := (0x10_000 - target % 0x10_000) / 0x200;
+    if first_sector_count > sector_count first_sector_count = sector_count;
+    sector_count -= first_sector_count;
+
+    ahci_transfer_sectors(dev, direction, target, cast(u32) lba, xx first_sector_count);
+    lba += first_sector_count;
+    target += first_sector_count * 0x200;
+
+    while sector_count > 128 {
+        ahci_transfer_sectors(dev, direction, target, cast(u32) lba, 128);
+        target += 0x10_000;
+        lba += 128;
+        sector_count -= 128;
+    }
+
+    if sector_count {
+        ahci_transfer_sectors(dev, direction, target, xx lba, xx sector_count);
+    }
+}
+
+ahci_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Transfer_Direction, physical: u64, lba: u64, sector_count: int) {
+    fis: AHCI_FIS_Command;
+    fis.flags = .IS_COMMAND;
+    fis.command = ifx direction == .READ then Ide_Command.READ_DMA_EX else .WRITE_DMA_EX;
+    fis.device = 1 << 6;
+    fis.sectors_low = cast(u8) (sector_count);
+    fis.sectors_high = cast(u8) (sector_count >> 8);
+
+    fis.lba_0 = xx (lba);
+    fis.lba_1 = xx (lba >> 8);
+    fis.lba_2 = xx (lba >> 16);
+    fis.lba_3 = xx (lba >> 24);
+    fis.lba_4 = xx (lba >> 32);
+    fis.lba_5 = xx (lba >> 40);
+
+    table := cast(*Ahci_Command_Table) to_virtual(dev.ahci.command_list_base.CTBA__command_table_base);
+    table.CFIS__command_fis = fis;
+
+    dev.ahci.command_list_base.PRDTL__prd_table_length = 1;
+    dev.ahci.command_list_base.PRDBC__prd_byte_count = size_of(Ahci_PRDT);
+    dev.ahci.command_list_base.flags = size_of(AHCI_FIS_Command) / 4;
+    if direction == .WRITE {
+        dev.ahci.command_list_base.flags |= 0x40;
+    }
+
+    prdt := *table.PRDT__physical_region_descriptor_table[0];
+    prdt.DBA__data_base_address = physical;
+    prdt.DBC__data_byte_count = cast(u32) sector_count * 0x200 - 1;
+    // prdt.I__interrupt_on_completion = .NO;
+
+    Timeout(#code {
+        if dev.ahci.port.SACT__sata_active & 1 > 0  continue;
+
+        ata_status := cast(u32) (Ide_Status.BUSY | .TRANSFER_REQUESTED);
+        if (dev.ahci.port.TFD__task_file_data & ata_status > 0) continue;
+
+        break;
+    }, "SATA busy timeout\n");
+
+    assert(dev.ahci.port.CI__command_issue & 0x1 == 0);
+    dev.ahci.port.CI__command_issue |= 0x1;
+
+    Timeout(#code {
+        if !(dev.ahci.port.CI__command_issue & 0x1)  break;
+    }, "SATA command issue timeout\n");
 }
 
 Ahci_Command_Header :: struct {
@@ -974,7 +1007,7 @@ Ahci_Received_Fis :: struct {
 AHCI_FIS_Command :: struct {
     fis_type := Fis_Type.REGISTER_H2D;
     flags: enum u8 { NONE :: 0x0; IS_COMMAND :: 0x80; };
-    command: u8;
+    command: Ide_Command;
     features0: u8;
 
     lba_0: u8;
@@ -1035,8 +1068,8 @@ Ahci_Memory_Region :: struct {
         SACT__sata_active: u32;
         CI__command_issue: u32;
         SNTF__sata_notif: u32;
-        FNS__fis_based_switching_control: u32;
-        device_sleep: u32;
+        FBS__fis_based_switching_control: u32;
+        DEVSLP__device_sleep: u32;
 
         RSV1__reserved: [0x70 - 0x48] u8;
         vendor_specific: [16] u8;
@@ -1057,7 +1090,7 @@ HBA_GHC__Ahci_Global_Host_Control :: enum_flags u32 {
 
 HBA_CAP__Ahci_Capabilities :: enum_flags u32 {
     SAM__supports_ahci_only :: 0x4_0000;
-    S64A__64bit_addressing :: 0x8000_0000;
+    S64A__64bit_addressing  :: 0x8000_0000;
 }
 
 HBA_PxSSTS__Ahci_Port_Sata_Status :: enum u32 {

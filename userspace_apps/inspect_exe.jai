@@ -6,7 +6,11 @@
 #import "Formosa_Executable_Format";
 
 main :: (file_name: string) {
-    file := read_file(file_name);
+    file, result := read_file(file_name);
+    if result != .success {
+        write_string(tprint("Could not read file %\n", file_name));
+        return;
+    }
     builder: String_Builder;
 
     attr: [..] Rich_Text.Attribute;

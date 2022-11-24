@@ -224,7 +224,7 @@ enable_ps2 :: () {
     port_write(Ps2_Port.DATA, Ps2_Mouse_Cmd.SET_DEFAULTS);
 
     mouse_wait(false);
-    assert(port_read(Ps2_Port.DATA) == PS2_ACK);
+    // assert(port_read(Ps2_Port.DATA) == PS2_ACK);
 
     pic_enable_irq(.PS2_MOUSE);
 
@@ -235,7 +235,7 @@ enable_ps2 :: () {
     port_write(Ps2_Port.DATA, Ps2_Mouse_Cmd.ENABLE_DATA_REPORTING);
 
     mouse_wait(false);
-    assert(port_read(Ps2_Port.DATA) == PS2_ACK);
+    // assert(port_read(Ps2_Port.DATA) == PS2_ACK);
 
     input_key_buffer.read_index = input_key_buffer.write_index;
 }

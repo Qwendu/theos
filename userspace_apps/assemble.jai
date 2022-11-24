@@ -352,20 +352,28 @@ code_section_virtual_base :: 0x1200_0000;
 code: [..] u8;
 
 main :: (source_file: string, output_name: string) {
-    source_code := cast(string) read_file(source_file);
+    source_code, result := read_file(source_file);
 
-    if !source_code.count {
-        write_string(tprint("File does not exist or is empty: %\n", source_file));
+    if result != .success {
+        write_string(tprint("File not found: %\n", source_file));
         return;
     }
 
-    tokens := tokenize(source_code);
+    if source_code.count == 0 {
+        return;
+    }
+
+    tokens := tokenize(xx source_code);
     // write_string(tprint("Token count: %\n", tokens.count));
     // output(tokens);
     // return;
     statements := parse(tokens);
 
-    encodings_blob = read_file("code/x64_enc");
+    encodings_blob, result = read_file("code/x64_enc");
+    if result != .success {
+        write_string("Could not open encodings blob (code/x64_enc). Exiting.\n");
+        return;
+    }
     defer unmap_memory(encodings_blob.count, encodings_blob.data);
     enc_header := cast(*File_Header) encodings_blob.data;
     assert(enc_header.instruction_stride == size_of(Instruction_Header));
@@ -490,7 +498,9 @@ main :: (source_file: string, output_name: string) {
     content.data = file;
 
     create_file(output_name);
-    write_file(output_name, content);
+    if write_file(output_name, content) != .success {
+        write_string(tprint("Could not write file %\n", output_name));
+    }
 }
 
 types_match :: (value: Typed_Value, operand: Instruction_Operand_Type) -> bool {

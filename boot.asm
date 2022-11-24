@@ -343,7 +343,7 @@ load_kernel_dbs:
 
 [bits 64]
 long_mode_start:
-    mov rbp, 0xffffffff80300000
+    mov rbp, 0xffffffff80300008
     mov rsp, rbp
 
     mov rcx, 0xffffffff80100000

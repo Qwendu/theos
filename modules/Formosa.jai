@@ -145,25 +145,36 @@ set_theme :: (theme: Theme) {
     }
 }
 
-read_file :: (name: string) -> [] u8 {
+Filesystem_Result :: enum s64 {
+    success :: 0;
+    item_doesnt_exist :: 1;
+    item_already_exists :: 2;
+    invalid_name :: 3;
+    item_is_wrong_kind :: 4;
+}
+
+read_file :: (name: string) -> [] u8, Filesystem_Result {
     using Syscall_Numbers;
 
     p_name := *name;
 
-    result: [] u8;
-    target := *result;
+    data: [] u8;
+    target := *data;
+    result: Filesystem_Result;
     #asm {
         mov rbx: gpr === d, target;
         mov rcx: gpr === c, p_name;
         mov rax: gpr === a, READ_FILE;
 
         int 0x80;
+        mov result, rax;
     }
-    return result;
+    return data, /* result */ .success;
 }
 
-write_file :: (name: string, data: [] u8) {
+write_file :: (name: string, data: [] u8) -> Filesystem_Result {
     using Syscall_Numbers;
+    result: Filesystem_Result;
 
     _data := *data;
     _name := *name;
@@ -173,11 +184,14 @@ write_file :: (name: string, data: [] u8) {
         mov rax: gpr === a, WRITE_FILE;
 
         int 0x80;
+        mov result, rax;
     }
+    return /* result */ .success;
 }
 
-create_file :: (name: string) {
+create_file :: (name: string) -> Filesystem_Result {
     using Syscall_Numbers;
+    result: Filesystem_Result;
 
     _name := *name;
     #asm {
@@ -185,7 +199,9 @@ create_file :: (name: string) {
         mov rax: gpr === a, CREATE_FILE;
 
         int 0x80;
+        mov result, rax;
     }
+    return /* result */ .success;
 }
 
 list_directory :: (name: string) -> [] Directory_Entry_Info {
@@ -660,4 +676,3 @@ crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
     }
     return 0;
 }
-

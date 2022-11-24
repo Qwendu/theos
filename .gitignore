@@ -57,3 +57,4 @@ files/code/x86_64.json
 aaaaaaa.png
 files/key_code_printer
 ahci_test
+userspace_apps/chess_engine/_libnnueprobe.a

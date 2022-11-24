@@ -2,9 +2,9 @@
 #import "Formosa";
 
 main :: (file_name: string) {
-    file := read_file(file_name);
+    file, result := read_file(file_name);
 
-    if !file.count {
+    if result != .success {
         write_string("Could not read file, not found: '");
         write_string(file_name);
         write_string("'.\n");

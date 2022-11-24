@@ -109,14 +109,11 @@ kernel_entry :: () {
         discover_mass_storage_devices();
 
         for *disks {
-            if it.controller_type == .IDE {
-                boot_drive = it;
-            }
-
-            if it.controller_type == .AHCI {
-                print("Found a sata drive\n");
-            }
+            assert(boot_drive == null);
+            boot_drive = it;
         }
+
+        assert(boot_drive != null, "Could not find a bootable (IDE) drive");
 
         read_block = (block_index: int, block: *Disk_Block, *void) {
             location := FS_BASE_ADDRESS + block_index * FS_BLOCKSIZE;
@@ -400,7 +397,7 @@ enable_simd :: () {
 
     if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
         index: gpr === c;
-
+        
         xgetbv xcr0_h:, xcr0_l:, index;
         or xcr0_l, 7;
         xsetbv xcr0_h, xcr0_l, index;
@@ -1434,6 +1431,49 @@ get_physical_address :: (virtual_address: *void) -> u64, present: bool {
 }
 
 #program_export
+gp_exception :: (stack_data: *Interrupt_Data) #c_call {
+    stack_data = xx (cast(*u8) stack_data + 8);
+
+    push_context Context.{} {
+//      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
+        print("An exception has occurred:  ");
+        print("General Protection fault #GP\n\n", theme.accent);
+
+        print("Interrupt stack:\n");
+        print("RIP:    "); print_hex(stack_data.ip);    print("\n");
+        print("CS:     "); print_hex(stack_data.cs);    print("\n");
+        print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("SP:     "); print_hex(stack_data.sp);    print("\n");
+        print("SS:     "); print_hex(stack_data.ss);    print("\n");
+
+        paint_screen();
+
+        #if PAGE_FAULT_STACK_TRACE {
+            if current_task && current_task.the_context {
+                print("\nStack trace:\n");
+                node := current_task.the_context.stack_trace;
+                while node {
+                    if node.info != null {
+                        print("In file \"");
+                        print(node.info.location.fully_pathed_filename);
+                        print("\" -> in proc \"");
+                        print(node.info.name);
+                        print("\" on line ");
+                        print(node.line_number);
+                        print("\n");
+                    }
+
+                    node = node.next;
+                }
+                paint_screen();
+            }
+        }
+    }
+
+    while true #asm { hlt; }
+}
+
+#program_export
 page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
     stack_data = xx (cast(*u8) stack_data + 8);
 
@@ -2018,17 +2058,19 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             name:      string = << cast(*string) data.rcx;
             file_data: [] u8  = << cast(*[] u8)  data.rbx;
 
-            write_file(name, file_data);
+            data.rax = xx write_file(name, file_data);
         }
 
         else if data.rax == xx CREATE_FILE {
             name: string = << cast(*string) data.rbx;
-            create_file(name);
+            data.rax = xx create_file(name);
         }
 
         else if data.rax == xx LIST_DIRECTORY {
             name := << cast(*string) data.rbx;
-            << cast(*[] Directory_Entry_Info) data.rcx = list_directory(name);
+            res: Filesystem_Result;
+            << cast(*[] Directory_Entry_Info) data.rcx, res = list_directory(name);
+            data.rax = xx res;
         }
 
         else if data.rax == xx GET_THEME {
