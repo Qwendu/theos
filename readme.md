@@ -1,5 +1,5 @@
 
-#### Current Jai version: 0.1.038
+#### Current Jai version: 0.1.044
 
 ## Features
 - Structured shell that can manipulate typed data

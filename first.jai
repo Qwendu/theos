@@ -98,10 +98,10 @@ interrupt_handlers: [] struct {
 
     version_info: Version_Info;
     compiler_get_version_info(*version_info);
-    if memcmp(*version_info, *Version_Info.{0, 1, 38}, size_of(Version_Info)) != 0 {
+    if memcmp(*version_info, *Version_Info.{0, 1, 44}, size_of(Version_Info)) != 0 {
         using version_info;
-        print("This is the wrong version of the compiler! You need 0.1.038, but have %.%.0%\n", major, minor, micro);
-        return;
+        print("This is the wrong version of the compiler! You need 0.1.044, but have %.%.0%\n", major, minor, micro);
+        print("However there's a good chance it works anyway, so continuing.\n");
     }
 
     if clean {
