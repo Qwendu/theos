@@ -1327,6 +1327,7 @@ map_memory :: (size_bytes: int, virtual_address: u64 = xx,no_check -1, physical_
         map_page(source + offset, phys, flags, loc);
     }
 
+    if source == 0x25a_000  assert(false, "lmao");
     return xx source;
 }
 
@@ -1364,6 +1365,7 @@ map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PR
 }
 
 address_is_page :: (address: u64) -> bool {
+    HexMode();
     if !address {
         printf("Address is not a page: %, it is zero\n", address);
         return false;
@@ -1428,49 +1430,6 @@ get_physical_address :: (virtual_address: *void) -> u64, present: bool {
 
     pte   := ReadTableEntry(pt_offset, pde);
     return (pte & ~0xfff) + page_offset, true;
-}
-
-#program_export
-gp_exception :: (stack_data: *Interrupt_Data) #c_call {
-    stack_data = xx (cast(*u8) stack_data + 8);
-
-    push_context Context.{} {
-//      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
-        print("An exception has occurred:  ");
-        print("General Protection fault #GP\n\n", theme.accent);
-
-        print("Interrupt stack:\n");
-        print("RIP:    "); print_hex(stack_data.ip);    print("\n");
-        print("CS:     "); print_hex(stack_data.cs);    print("\n");
-        print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
-        print("SP:     "); print_hex(stack_data.sp);    print("\n");
-        print("SS:     "); print_hex(stack_data.ss);    print("\n");
-
-        paint_screen();
-
-        #if PAGE_FAULT_STACK_TRACE {
-            if current_task && current_task.the_context {
-                print("\nStack trace:\n");
-                node := current_task.the_context.stack_trace;
-                while node {
-                    if node.info != null {
-                        print("In file \"");
-                        print(node.info.location.fully_pathed_filename);
-                        print("\" -> in proc \"");
-                        print(node.info.name);
-                        print("\" on line ");
-                        print(node.line_number);
-                        print("\n");
-                    }
-
-                    node = node.next;
-                }
-                paint_screen();
-            }
-        }
-    }
-
-    while true #asm { hlt; }
 }
 
 #program_export
@@ -1762,6 +1721,14 @@ start_process_elf :: (elf: *void) {
         wrfsbase tls;
     }
 
+    memory_base: u64;
+    memory_limit: u64;
+
+    file_base: u64;
+    file_limit: u64;
+
+    file_base_set: bool;
+
     for 0..elf_header.e_phnum - 1 {
         base := elf + elf_header.e_phoff;
         base += it  * elf_header.e_phentsize;
@@ -1769,19 +1736,26 @@ start_process_elf :: (elf: *void) {
 
         if header.p_type != PT_LOAD  continue;
 
-        using Page_Flags;
-        flags := USER_SUPERVISOR | PRESENT | READ_WRITE;
-        offset := (header.p_vaddr % 0x1000);
-        map_memory(cast(int) (header.p_memsz), header.p_vaddr, flags = flags);
-        target := cast(*u8) header.p_vaddr;
+        if !memory_base memory_base = header.p_vaddr;
+        memory_limit = header.p_vaddr + header.p_memsz - memory_base;
 
-        for 0..header.p_filesz-1 {
-            target[it] = (cast(*u8) elf)[header.p_offset + it];
-        }
+        if !file_base_set file_base = header.p_offset;
+        file_base_set = true;
+        file_limit = header.p_offset + header.p_filesz - file_base;
+    }
 
-        for header.p_filesz..header.p_memsz-1 {
-            target[it] = 0;
-        }
+    using Page_Flags;
+    flags := USER_SUPERVISOR | PRESENT | READ_WRITE;
+    map_memory(cast(int) memory_limit, memory_base, flags = flags);
+
+    for 0..elf_header.e_phnum - 1 {
+        base := elf + elf_header.e_phoff;
+        base += it  * elf_header.e_phentsize;
+        header := cast(*Elf64_Phdr) base;
+
+        if header.p_type != PT_LOAD  continue;
+
+        memcpy(cast(*void) header.p_vaddr, elf + header.p_offset, xx header.p_filesz);
     }
 
     shell.foreground_task = current_task;
@@ -1791,14 +1765,7 @@ start_process_elf :: (elf: *void) {
 
     shell.foreground_task = *the_first_task;
 
-    for 0..elf_header.e_phnum - 1 {
-        base := elf + elf_header.e_phoff;
-        base += it  * elf_header.e_phentsize;
-        header := cast(*Elf64_Phdr) base;
-
-        if header.p_type != PT_LOAD  continue;
-        unmap_memory(xx header.p_memsz, header.p_vaddr);
-    }
+    unmap_memory(xx memory_limit, memory_base);
 }
 
 start_process_minimal :: (header: *void) {
@@ -1866,17 +1833,19 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         result.kind = .NONE;
 
         scan_code := read_event_buffer(*current_task.parent_process.input);
-
         if scan_code != .NONE {
             result.kind = .KEYBOARD;
             result.keyboard_scan_code = xx scan_code;
+            return result;
         }
 
-        // mouse_event := read_event_buffer(*mouse.buffer);
-        // if mouse_event != .NONE {
-        //     result.kind = .MOUSE;
-        //     result.mouse_event = mouse_event;
-        // }
+        mouse_event := read_event_buffer(*current_task.parent_process.mouse_events);
+        if mouse_event.event != .NONE {
+            result.kind = .MOUSE;
+            result.mouse_event = mouse_event;
+            return result;
+        }
+
         return result;
     }
 
@@ -2155,6 +2124,17 @@ Message_Kind :: enum {
     MOUSE;
 }
 
+Mouse_Event :: struct {
+    event: Mouse_Event_Type;
+
+    maybe_window: Window_Handle;
+    pixel_position_x: int;
+    pixel_position_y: int;
+
+    pixel_position_in_window_x: int;
+    pixel_position_in_window_y: int;
+}
+
 dont :: () #expand {
     #asm {
         cli;
@@ -2194,3 +2174,120 @@ Timeout :: (code: Code, message := "", time := 1000) #expand {
     }
     return result;
 };
+
+
+
+
+
+
+#program_export
+invalid_opcode_exception :: (stack_data: *Interrupt_Data) #c_call {
+//    stack_data = xx (cast(*u8) stack_data);
+
+    push_context Context.{} {
+//      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
+        print("An exception has occurred:  ");
+        print("Invalid Opcode\n\n", theme.accent);
+
+        print("Interrupt stack:\n");
+        print("RIP:    "); print_hex(stack_data.ip);    print("\n");
+        print("CS:     "); print_hex(stack_data.cs);    print("\n");
+        print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("SP:     "); print_hex(stack_data.sp);    print("\n");
+        print("SS:     "); print_hex(stack_data.ss);    print("\n");
+
+        paint_screen();
+
+        #if PAGE_FAULT_STACK_TRACE {
+            if current_task && current_task.the_context {
+                print("\nStack trace:\n");
+                node := current_task.the_context.stack_trace;
+                while node {
+                    if node.info != null {
+                        print("In file \"");
+                        print(node.info.location.fully_pathed_filename);
+                        print("\" -> in proc \"");
+                        print(node.info.name);
+                        print("\" on line ");
+                        print(node.line_number);
+                        print("\n");
+                    }
+
+                    node = node.next;
+                }
+                paint_screen();
+            }
+        }
+    }
+
+    while true #asm { hlt; }
+}
+
+#program_export
+gp_exception :: (stack_data: *Interrupt_Data) #c_call {
+    stack_data = xx (cast(*u8) stack_data + 8);
+
+    push_context Context.{} {
+//      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
+        print("An exception has occurred:  ");
+        print("General Protection fault #GP\n\n", theme.accent);
+
+        print("Interrupt stack:\n");
+        print("RIP:    "); print_hex(stack_data.ip);    print("\n");
+        print("CS:     "); print_hex(stack_data.cs);    print("\n");
+        print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("SP:     "); print_hex(stack_data.sp);    print("\n");
+        print("SS:     "); print_hex(stack_data.ss);    print("\n");
+
+        paint_screen();
+
+        #if PAGE_FAULT_STACK_TRACE {
+            if current_task && current_task.the_context {
+                print("\nStack trace:\n");
+                node := current_task.the_context.stack_trace;
+                while node {
+                    if node.info != null {
+                        print("In file \"");
+                        print(node.info.location.fully_pathed_filename);
+                        print("\" -> in proc \"");
+                        print(node.info.name);
+                        print("\" on line ");
+                        print(node.line_number);
+                        print("\n");
+                    }
+
+                    node = node.next;
+                }
+                paint_screen();
+            }
+        }
+
+        print("Memory around the stack pointer:\n");
+        for -64 .. 63 {
+            if it % 8 == 0 {
+                print("\n");
+                if it == 0 print_hex(stack_data.sp + xx it, color = theme.accent);
+                else print_hex(stack_data.sp + xx it);
+                print(":   ");
+            }
+            print_hex((cast(*u8) stack_data.sp)[it], decorate = false);
+            print(" ");
+        }
+
+        print("Memory around the instruction pointer:\n");
+        for -64 .. 63 {
+            if it % 8 == 0 {
+                print("\n");
+                if it == 0 print_hex(stack_data.ip + xx it, color = theme.accent);
+                else print_hex(stack_data.ip + xx it);
+                print(":   ");
+            }
+            print_hex((cast(*u8) stack_data.ip)[it], decorate = false);
+            print(" ");
+        }
+
+        paint_screen();
+    }
+
+    while true #asm { hlt; }
+}

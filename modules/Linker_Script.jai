@@ -28,9 +28,13 @@ set_linker_script :: (options: *Build_Options, w: Workspace, script: Linker_Scri
             print_to_builder(*code, "    . = 0x%;\n", formatInt(it.address, base = 16));
             last_address = it.address;
         }
-        print_to_builder(*code, "    .%\t: { * (.%)", it.name, it.name);
-        if it.vm_alignment != -1 print_to_builder(*code, " ALIGN(%)", it.vm_alignment);
-        print_to_builder(*code, "; }\n");
+        print_to_builder(*code, "    .%\t", it.name);
+        if it.vm_alignment != -1 {
+            print_to_builder(*code, " ALIGN(%)", it.vm_alignment);
+            print_to_builder(*code, ": {.= (. & ~%) + %; * (.%*);} :phdr_%\n", it.vm_alignment - 1, it.vm_alignment, it.name, it.name);
+        } else {
+            print_to_builder(*code, ": { * (.%); }\n", it.name);
+        }
     }
 
     print_to_builder(*code, "}\n");

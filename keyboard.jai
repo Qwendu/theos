@@ -63,7 +63,7 @@ mouse_wait :: ($ is_signal: bool) #no_context {
     }
 }
 
-Mouse_Event :: enum {
+Mouse_Event_Type :: enum {
     NONE;
     BUTTON_1_PRESSED;
     BUTTON_1_RELEASED;
@@ -80,7 +80,7 @@ mouse: struct {
     position_x: int;
     position_y: int;
 
-    buffer: Event_Buffer(Mouse_Event);
+    buffer: Event_Buffer(Mouse_Event_Type);
 }
 
 Ps2_Port :: enum {
@@ -148,12 +148,12 @@ ps2_mouse :: () #c_call {
     button_2 := (mouse.bytes[0] & 2) > 0;
 
     if button_1 != mouse.button_1 {
-        write_event_buffer(*mouse.buffer, cast(Mouse_Event) !button_1 + .BUTTON_1_PRESSED);
+        write_event_buffer(*mouse.buffer, cast(Mouse_Event_Type) !button_1 + .BUTTON_1_PRESSED);
         mouse.button_1 = button_1;
     }
 
     if button_2 != mouse.button_2 {
-        write_event_buffer(*mouse.buffer, cast(Mouse_Event) !button_2 + .BUTTON_2_PRESSED);
+        write_event_buffer(*mouse.buffer, cast(Mouse_Event_Type) !button_2 + .BUTTON_2_PRESSED);
         mouse.button_2 = button_2;
     }
 

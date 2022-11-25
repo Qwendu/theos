@@ -20,12 +20,27 @@ handle_mouse_events :: () {
         press := read_event_buffer(*mouse.buffer);
         // printf("Read event\n");
         if press == .NONE break;
+
+        event: Mouse_Event;
+        event.event = press;
+        event.pixel_position_x = mouse.position_x;
+        event.pixel_position_y = mouse.position_y;
+
         if shell.flag_held {
-            write_event_buffer(*the_first_task.parent_process.mouse_events, press);
+            write_event_buffer(*the_first_task.parent_process.mouse_events, event);
             continue;
         }
 
-        write_event_buffer(*shell.foreground_task.parent_process.mouse_events, press);
+        hit := get_window_at(event.pixel_position_x, event.pixel_position_y);
+
+        if hit != INVALID_WINDOW_HANDLE {
+            window := *windows[hit];
+            event.maybe_window = hit;
+            event.pixel_position_in_window_x = event.pixel_position_x - window.blitter.draw.x;
+            event.pixel_position_in_window_y = event.pixel_position_y - window.blitter.draw.y;
+        }
+
+        write_event_buffer(*shell.foreground_task.parent_process.mouse_events, event);
         if shell.foreground_task.state == .WAITING_FOR_MESSAGE {
             shell.foreground_task.state = .AWAKE;
         }
@@ -138,34 +153,38 @@ update_syntax_highlighting :: () {
     }
 }
 
+get_window_at :: (x: int, y: int) -> Window_Handle {
+    hit := INVALID_WINDOW_HANDLE;
+    for *windows {
+        if (x > it.blitter.draw.x) && (x < it.blitter.draw.x + it.blitter.draw.width) && (y > it.blitter.draw.y) && (y < it.blitter.draw.y + it.blitter.draw.height) {
+            if hit == INVALID_WINDOW_HANDLE {
+                hit = it_index;
+            } else {
+                entry := *windows[hit].blitter.draw;
+                while entry {
+                    if entry == *it.blitter.draw {
+                        hit = it_index;
+                        break;
+                    }
+                    entry = entry.next;
+                }
+            }
+        }
+    }
+    return hit;
+}
+
 shell_handle_mouse :: () {
     while true {
         event := read_event_buffer(*the_first_task.parent_process.mouse_events);
-        if event == .NONE break;
+        if event.event == .NONE break;
 
-        if event == .BUTTON_1_PRESSED {
+        if event.event == .BUTTON_1_PRESSED {
             shell.lmb_held = true;
 
             x := mouse.position_x;
             y := mouse.position_y;
-            hit := INVALID_WINDOW_HANDLE;
-
-            for *windows {
-                if (x > it.blitter.draw.x) && (x < it.blitter.draw.x + it.blitter.draw.width) && (y > it.blitter.draw.y) && (y < it.blitter.draw.y + it.blitter.draw.height) {
-                    if hit == INVALID_WINDOW_HANDLE {
-                        hit = it_index;
-                    } else {
-                        entry := *windows[hit].blitter.draw;
-                        while entry {
-                            if entry == *it.blitter.draw {
-                                hit = it_index;
-                                break;
-                            }
-                            entry = entry.next;
-                        }
-                    }
-                }
-            }
+            hit := get_window_at(x, y);
 
             move_to_front(hit);
             shell.dragging = hit;
@@ -182,7 +201,7 @@ shell_handle_mouse :: () {
             }
         }
 
-        if event == .BUTTON_1_RELEASED {
+        if event.event == .BUTTON_1_RELEASED {
             shell.lmb_held = false;
             shell.dragging = INVALID_WINDOW_HANDLE;
         }

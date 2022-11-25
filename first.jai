@@ -18,7 +18,6 @@ exceptions: [] struct {
     .{ "Breakpoint exception",             0x03, false },
     .{ "Overflow exception",               0x04, false },
     .{ "Bound range exceeded exception",   0x05, false },
-    .{ "Invalid opcode exception",         0x06, false },
     .{ "Device not available exception",   0x07, false },
     .{ "Double Fault",                     0x08, true  },
     .{ "Invalid TSS",                      0x0a, true  },
@@ -38,6 +37,7 @@ interrupt_handlers: [] struct {
     handler: string;
     slot: int;
 } = .[
+    .{ "invalid_opcode_exception", 0x06 },
     .{ "gp_exception", 0x0d },
     .{ "pit_interrupt",  0x20 },
     .{ "ps2_interrupt",  0x21 },
@@ -207,10 +207,10 @@ interrupt_handlers: [] struct {
             script: Linker_Script;
             script.entry_point_name = "kernel_entry";
             script.sections = .[
-                .{ base, "text",   0x1000 },
-                .{ base, "rodata", 0x1000 },
-                .{ base, "data",   0x1000 },
-                .{ base, "bass",   0x1000 },
+                    .{ base, "text", -1 },
+                    .{ base, "rodata", -1 },
+                    .{ base, "data", -1 },
+                    .{ base, "bss", -1 },
             ];
             set_linker_script(*options, w, script);
 

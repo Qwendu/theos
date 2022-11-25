@@ -418,7 +418,7 @@ Message_Kind :: enum {
     EXIT;
     KEYBOARD;
     MOUSE;
-    // THEME_CHANGED;
+    THEME_CHANGED;
 }
 
 Theme :: struct {
@@ -631,12 +631,21 @@ Keyboard_Scan_Code :: enum u16 {
     DELETE;
 }
 
-Mouse_Event :: enum {
-    NONE;
-    BUTTON_1_PRESSED;
-    BUTTON_1_RELEASED;
-    BUTTON_2_PRESSED;
-    BUTTON_2_RELEASED;
+Mouse_Event :: struct {
+    event: enum {
+        NONE;
+        BUTTON_1_PRESSED;
+        BUTTON_1_RELEASED;
+        BUTTON_2_PRESSED;
+        BUTTON_2_RELEASED;
+    }
+
+    maybe_window: Window_Handle;
+    pixel_position_x: int;
+    pixel_position_y: int;
+
+    pixel_position_in_window_x: int;
+    pixel_position_in_window_y: int;
 }
 
 
