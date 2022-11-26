@@ -71,9 +71,9 @@ interrupt_handlers: [] struct {
             return;
 
           case "vdi";   make_vdi  = true;
-          case "vbox";  vbox      = true;
+          case "run_vm";  vbox      = true;
           case "user";  userspace = true;
-          case "nokernel";  no_kernel = true;
+          case "no_kernel";  no_kernel = true;
           case "setup_vm";  setup_vm = true;
           case "help";
             print("\nSee readme.md.\n\n");
