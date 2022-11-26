@@ -1,4 +1,7 @@
-// 8
+
+// Metaprogram to build a Jai program into the custom executable format that we can load and run
+
+#import,file "modules/Formosa_Executable_Format.jai";
 
 entry_point :: #string END
 
@@ -302,5 +305,3 @@ build_formosa_app :: (name: string) {
 #import "File";
 #import "Basic";
 #import "String";
-
-#import "Formosa_Executable_Format";

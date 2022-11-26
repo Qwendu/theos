@@ -2,12 +2,13 @@
 /.build/*
 /bochs state/*
 formosa
-*.lock
 modules/Basic/
 modules/File/
 modules/Input/
+modules/.build/*
 
 program
+*.lock
 *.vdi
 *.img
 *.iso
@@ -16,7 +17,6 @@ the_work
 todo
 *.zip
 *.vmdk
-demo.txt
 
 files/chess
 files/echo
@@ -44,6 +44,8 @@ files/assemble
 files/inspect_exe
 files/equals
 files/get_people
+files/mouse_test
+files/key_code_printer
 
 .#*
 
@@ -53,8 +55,6 @@ script
 update
 test.jai
 files/code/x86_64.json
-/modules/.build/*
 aaaaaaa.png
-files/key_code_printer
 ahci_test
 userspace_apps/chess_engine/_libnnueprobe.a

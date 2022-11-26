@@ -409,7 +409,7 @@ Message :: struct {
     using data: union {
         keyboard_scan_code: Keyboard_Scan_Code;
         key: Keyboard_Scan_Code;
-        mouse_event: Mouse_Event;
+        mouse: Mouse_Event;
     };
 }
 
@@ -641,11 +641,11 @@ Mouse_Event :: struct {
     }
 
     maybe_window: Window_Handle;
-    pixel_position_x: int;
-    pixel_position_y: int;
+    position_x: int;
+    position_y: int;
 
-    pixel_position_in_window_x: int;
-    pixel_position_in_window_y: int;
+    position_in_window_x: int;
+    position_in_window_y: int;
 }
 
 

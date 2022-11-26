@@ -138,7 +138,7 @@ start:
 
     ; === Switch to Long Mode ===
     mov edi, page_table_address
-    jmp SwitchToLongMode
+    jmp switch_to_long_mode
 
   .greeting: db 'Hello, sailor', 0xa, 0xd, 0
 
@@ -339,10 +339,122 @@ load_kernel_dbs:
 
   .message: db "There has been an error while reading the disk: "
 
-%include "long.asm"
+
+
+; From https://wiki.osdev.org/Entering_Long_Mode_Directly
+; Copyright information: https://wiki.osdev.org/OSDev_Wiki:Copyrights
+
+%define page_present    (1 << 0)
+%define page_write      (1 << 1)
+%define page_size       (1 << 7)
+
+%define segment_code     0x0008
+%define segment_data     0x0010
+
+align 4
+idt:
+    .length       dw 0
+    .base         dd 0
+
+; === Switch from 16-bit "real mode" to 64-bit "long mode" ===
+
+switch_to_long_mode:
+    ; === Clear page table ===
+    push di
+    mov ecx, page_table_size / 4
+    xor eax, eax
+    cld
+    rep stosd
+    pop di
+
+    ; === Identity map + virtual mirror ===
+    lea eax, [es:di + 0x1000]
+    or eax, page_present | page_write
+    mov [es:di], eax
+
+    lea eax, [es:di + 0x4000]
+    or eax, page_present | page_write
+    mov [es:di + 0x1ff*8], eax
+
+    lea eax, [es:di + 0x2000]
+    or eax, page_present | page_write
+    mov [es:di + 0x1000], eax
+
+    lea eax, [es:di + 0x5000]
+    or eax, page_present | page_write
+    mov [es:di + 0x4000 + 0x1fe*8], eax
+
+    mov eax, page_present | page_write | page_size
+    mov [es:di + 0x5000], eax
+    add eax, 0x200000
+    mov [es:di + 0x5008], eax
+    add eax, 0x200000
+    mov [es:di + 0x5010], eax
+
+    mov eax, page_present | page_write | page_size
+    mov [es:di + 0x2000], eax
+    add eax, 0x200000
+    mov [es:di + 0x2008], eax
+    add eax, 0x200000
+    mov [es:di + 0x2010], eax
+
+
+
+    mov al, 0xff
+    out 0xa1, al
+    out 0x21, al
+
+    nop
+    nop
+
+    lidt [idt]
+
+    ; === Enable paging and memory protection ===
+
+    mov eax, 10100000b
+    mov cr4, eax
+
+    mov edx, edi
+    mov cr3, edx
+
+    mov ecx, 0xc0000080
+    rdmsr
+
+    or eax, 0x00000100
+    wrmsr
+
+    mov ebx, cr0
+    or ebx,0x80000001
+    mov cr0, ebx
+
+    lgdt [gdt]
+
+    jmp segment_code:long_mode_start
+
+
+gdt:
+    dw .end - .start - 1
+    dd .start
+
+  .start:
+    dq 0x0000000000000000
+    dq 0x00209a0000000000
+    dq 0x0000920000000000
+  .end:
+
+  align 4
+      dw 0
 
 [bits 64]
+
 long_mode_start:
+    mov ax, segment_data
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+
     mov rbp, 0xffffffff80300008
     mov rsp, rbp
 
