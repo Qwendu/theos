@@ -12,7 +12,6 @@ exceptions: [] struct {
     slot: int;
     has_error_code: bool;
 } = .[
-    .{ "Division by zero",                 0x00, false },
     .{ "Debug exception",                  0x01, false },
     .{ "Non-maskable interrupt exception", 0x02, false },
     .{ "Breakpoint exception",             0x03, false },
@@ -37,6 +36,7 @@ interrupt_handlers: [] struct {
     handler: string;
     slot: int;
 } = .[
+    .{ "zero_division", 0x00 },
     .{ "invalid_opcode_exception", 0x06 },
     .{ "gp_exception", 0x0d },
     .{ "pit_interrupt",  0x20 },
@@ -362,8 +362,8 @@ interrupt_handlers: [] struct {
     if userspace {
         write_string("\n=== Building Userspace Apps ===\n");
         {
-            make_directory_if_it_does_not_exist(".build/userspace_apps");
-            files := file_list("userspace_apps");
+            make_directory_if_it_does_not_exist(".build/userspace");
+            files := file_list("userspace");
 
             hashes: [] u32;
             new_hashes: [..] u32;
@@ -512,7 +512,6 @@ assemble :: () -> bool {
 
 
 shell :: (format: string, args: .. Any, print_output := true, dont_quote := false) -> bool, int, string, string {
-
     command := tprint(format, .. args);
     print("|shell| \"%\"\n", command);
     result, stdout, stderr := run_command(.. split(command, " "), capture_and_return_output = true, arg_quoting = ifx dont_quote then .NEVER_QUOTE else Process_Argument_Quoting.QUOTE_IF_NEEDED);

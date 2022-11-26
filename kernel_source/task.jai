@@ -7,6 +7,9 @@ Task_Info :: struct {
     stack_bottom: *void;
     stack_size: int;
 
+    thread_storage: *void;
+    thread_storage_size: int;
+
     startup_data: *void;
     entry: (data: *void);
     the_context: *Context;
@@ -45,7 +48,9 @@ initialize_task_manager :: () {
 switch_to_task :: (new: *Task_Info) {
     current := *current_task;
 
-    #asm {
+    tls := new.thread_storage;
+    #asm FSGSBASE {
+        wrfsbase tls;
         mov rbx: gpr === b, new;
         mov rax: gpr === a, current;
         int 0x40;
@@ -90,6 +95,10 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
     #asm { get_cr3 cr3; }
     task.page_table = cr3;
 
+    tls := map_memory(0x4000);
+    task.thread_storage = tls;
+    task.thread_storage_size = 0x4000;
+
     return task;
 }
 
@@ -111,16 +120,19 @@ exit :: () {
         assert(task != null);
         if task.next == current_task {
             task.next = task.next.next;
+            task = current_task;
             break;
         }
         task = task.next;
         assert(task != current_task);
     }
 
-    stack_top := current_task.stack_bottom - current_task.stack_size;
-    unmap_memory(current_task.stack_size, cast(u64) stack_top);
+    stack_top := task.stack_bottom - task.stack_size;
+    unmap_memory(task.stack_size, cast(u64) stack_top);
 
-    current_task.state = .RETIRED;
+    unmap_memory(task.thread_storage_size, cast(u64) task.thread_storage);
+
+    task.state = .RETIRED;
     yield();
 }
 

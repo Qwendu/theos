@@ -80,7 +80,7 @@ build_formosa_app :: (name: string) {
         options := get_build_options(w);
         options.output_executable_name = name;
         options.intermediate_path = ".build/";
-        options.output_path = ".build/userspace_apps/";
+        options.output_path = ".build/userspace/";
         options.output_type = .EXECUTABLE;
         options.entry_point_name = "_formosa_start";
 
@@ -105,7 +105,7 @@ build_formosa_app :: (name: string) {
         set_build_options(options, w);
 
         compiler_begin_intercept(w);
-        add_build_file(tprint("userspace_apps/%.jai", name), w);
+        add_build_file(tprint("userspace/%.jai", name), w);
 
         while true {
             message := compiler_wait_for_message();
@@ -193,10 +193,10 @@ build_formosa_app :: (name: string) {
         compiler_end_intercept(w);
     }
 
-    elf, success := read_entire_file(tprint(".build/userspace_apps/%", name));
+    elf, success := read_entire_file(tprint(".build/userspace/%", name));
     assert(success);
 
-    objdump_command := tprint("objdump -x .build/userspace_apps/% -d -M intel --source", name);
+    objdump_command := tprint("objdump -x .build/userspace/% -d -M intel --source", name);
     yes, error_code, stdout, stderr := shell(objdump_command, print_output = false);
     if !yes || error_code != 0 {
         write_string("objdump failed to run! (continuing)\n");

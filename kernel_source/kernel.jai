@@ -1704,6 +1704,7 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     task.state = .SLEEPING;
     task.page_table = create_address_space();
 
+    // What on     green earth
     old := current_task.page_table;
     new := task.page_table;
     current_task.page_table = new;
@@ -1718,12 +1719,6 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
 
 start_process_elf :: (elf: *void) {
     elf_header := cast(*Elf64_Ehdr) elf;
-
-    tls := map_memory(0x4000);
-    defer unmap_memory(0x4000, xx tls);
-    #asm FSGSBASE {
-        wrfsbase tls;
-    }
 
     memory_base: u64;
     memory_limit: u64;
@@ -2236,6 +2231,75 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
 //      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
         print("An exception has occurred:  ");
         print("General Protection fault #GP\n\n", theme.accent);
+
+        print("Interrupt stack:\n");
+        print("RIP:    "); print_hex(stack_data.ip);    print("\n");
+        print("CS:     "); print_hex(stack_data.cs);    print("\n");
+        print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("SP:     "); print_hex(stack_data.sp);    print("\n");
+        print("SS:     "); print_hex(stack_data.ss);    print("\n");
+
+        paint_screen();
+
+        #if PAGE_FAULT_STACK_TRACE {
+            if current_task && current_task.the_context {
+                print("\nStack trace:\n");
+                node := current_task.the_context.stack_trace;
+                while node {
+                    if node.info != null {
+                        print("In file \"");
+                        print(node.info.location.fully_pathed_filename);
+                        print("\" -> in proc \"");
+                        print(node.info.name);
+                        print("\" on line ");
+                        print(node.line_number);
+                        print("\n");
+                    }
+
+                    node = node.next;
+                }
+                paint_screen();
+            }
+        }
+
+        print("Memory around the stack pointer:\n");
+        for -64 .. 63 {
+            if it % 8 == 0 {
+                print("\n");
+                if it == 0 print_hex(stack_data.sp + xx it, color = theme.accent);
+                else print_hex(stack_data.sp + xx it);
+                print(":   ");
+            }
+            print_hex((cast(*u8) stack_data.sp)[it], decorate = false);
+            print(" ");
+        }
+
+        print("Memory around the instruction pointer:\n");
+        for -64 .. 63 {
+            if it % 8 == 0 {
+                print("\n");
+                if it == 0 print_hex(stack_data.ip + xx it, color = theme.accent);
+                else print_hex(stack_data.ip + xx it);
+                print(":   ");
+            }
+            print_hex((cast(*u8) stack_data.ip)[it], decorate = false);
+            print(" ");
+        }
+
+        paint_screen();
+    }
+
+    while true #asm { hlt; }
+}
+
+#program_export
+zero_division :: (stack_data: *Interrupt_Data) #c_call {
+//    stack_data = xx (cast(*u8) stack_data + 8);
+
+    push_context Context.{} {
+//      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
+        print("An exception has occurred:  ");
+        print("Division by Zero\n\n", theme.accent);
 
         print("Interrupt stack:\n");
         print("RIP:    "); print_hex(stack_data.ip);    print("\n");
