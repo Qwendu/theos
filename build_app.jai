@@ -1,5 +1,6 @@
 
 // Metaprogram to build a Jai program into the custom executable format that we can load and run
+// See modules/Formosa_Executable_Format.jai
 
 #import,file "modules/Formosa_Executable_Format.jai";
 
