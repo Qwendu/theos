@@ -85,7 +85,7 @@ interrupt_handlers: [] struct {
     }
 
     if vbox {
-        write_string("\n=== Doing Virtualbox Stuff ===\n");
+        write_string("\n=== Running VirtualBox ===\n");
         shell("VBoxManage controlvm formosa poweroff");
         shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
         shell("VBoxManage closemedium disk_images/formosa.vdi");
@@ -104,11 +104,14 @@ interrupt_handlers: [] struct {
         shell("VBoxManage modifyvm formosa --hpet on");
         shell("VBoxManage modifyvm formosa --memory 2048");
         shell("VBoxManage modifyvm formosa --vram 128");
-        shell("VBoxManage setextradata global GUI/MaxGuestResolution any");
+        shell("VBoxManage modifyvm formosa --bioslogofadein off");
+        shell("VBoxManage modifyvm formosa --bioslogofadeout off");
+        shell("VBoxManage modifyvm formosa --bioslogodisplaytime 0");
+        shell("VBoxManage modifyvm formosa --biosbootmenu disabled");
         shell("VBoxManage setextradata formosa \"CustomVideoMode1\" \"2560x1440x32\"", dont_quote = true);
         shell("VBoxManage setextradata formosa \"CustomVideoMode2\" \"1920x1080x32\"", dont_quote = true);
+        shell("VBoxManage setextradata formosa GUI/MaxGuestResolution any");
         shell("VBoxManage setextradata formosa GUI/DefaultCloseAction PowerOff");
-
         return;
     }
 
@@ -200,6 +203,8 @@ interrupt_handlers: [] struct {
             options.output_path = ".build/";
             options.output_type = .EXECUTABLE;
             options.entry_point_name = "kernel_entry";
+
+            // set_optimization_level(*options, 3, 0);
 
             #if !ENABLE_IST options.disable_redzone = true;
             options.stack_trace = true;

@@ -1,4 +1,6 @@
 
+#import "Machine_X64";
+
 FORMOSA_EXE_MAGIC :: #run << cast(*u64) "FORMOSA\0".data;
 
 Formosa_Exe_Header :: struct {
@@ -13,6 +15,9 @@ Formosa_Exe_Header :: struct {
     type_table_offset: int;
     type_table_virtual_address: *Type_Info;
     type_table_size: int;
+
+    required_cpu_features: []~s16 x86_Feature_Flag;
+    recommended_cpu_features: []~s16 x86_Feature_Flag;
 
     union {
         elf_offset: int;

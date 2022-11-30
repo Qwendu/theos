@@ -78,6 +78,8 @@ Boot_Data :: struct {
 boot_data: Boot_Data;
 boot_drive: *Mass_Storage_Device;
 
+the_kernel_context: *Context;
+
 #program_export
 kernel_entry :: () {
     kernel_context: Context;
@@ -85,6 +87,7 @@ kernel_entry :: () {
     kernel_context.logger = log;
     kernel_context.assertion_failed = assertion_failed;
 
+    the_kernel_context = *kernel_context;
     push_context kernel_context {
         boot_data = << cast(*Boot_Data) BOOT_DATA_AREA;
 
@@ -257,6 +260,7 @@ assertion_failed :: (location: Source_Code_Location, message: string) {
 min :: (a: $T, b: T) -> T { if a < b return a; return b; }
 max :: (a: $T, b: T) -> T { if a > b return a; return b; }
 
+#program_export
 crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
     #asm {
         cld;
@@ -270,6 +274,7 @@ crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
     return target;
 }
 
+#program_export
 crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     #asm {
         cld;
@@ -283,6 +288,7 @@ crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     return dst;
 }
 
+#program_export
 crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
     for 0..(cast(s64) count)-1 {
         if a[it] != b[it] {
@@ -1485,6 +1491,14 @@ page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
                 paint_screen();
             }
         }
+
+        if current_task != *the_first_task {
+            print("Exiting.\n");
+            exit();
+        } else {
+            print("This happened in the kernel. This is a bluescreen except the screen's not blue\n");
+        }
+        paint_screen();
     }
 
     while true #asm { hlt; }
@@ -1676,7 +1690,6 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
         return null;
     }
 
-    // Allocate the program parameters into kernel memory
     PARAMETER_BUFFER_SIZE :: 0x1000;
     parameter_base := map_memory(PARAMETER_BUFFER_SIZE);
     defer unmap_memory(PARAMETER_BUFFER_SIZE, cast(u64) parameter_base);
@@ -1704,7 +1717,6 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     task.state = .SLEEPING;
     task.page_table = create_address_space();
 
-    // What on     green earth
     old := current_task.page_table;
     new := task.page_table;
     current_task.page_table = new;
@@ -1814,9 +1826,9 @@ Syscall_Numbers :: enum {
     WAIT_FOR_MESSAGE :: 0x14;
     GET_DEVICE_LIST  :: 0x15;
     GET_SPACE_NEEDED_FOR_DEVICE_LIST :: 0x16;
-    YIELD :: 0x17;
-    QWERTYUIOP_RUN_COMMAND :: 0x18;
-    GET_WINDOW_BUFFER :: 0x19;
+    YIELD            :: 0x17;
+    GET_WINDOW_BUFFER      :: 0x19;
+    GET_MOUSE_POSITION     :: 0x20;
 }
 
 #program_export
@@ -1828,24 +1840,33 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
     syscall_context.assertion_failed = assertion_failed;
 
     get_message :: () -> Message {
-        result: Message;
-        result.kind = .NONE;
+        msg: Message;
+        msg.kind = .NONE;
 
         scan_code := read_event_buffer(*current_task.parent_process.input);
         if scan_code != .NONE {
-            result.kind = .KEYBOARD;
-            result.keyboard_scan_code = xx scan_code;
-            return result;
+            msg.kind = .KEYBOARD;
+            msg.keyboard.event = .PRESSED;
+            msg.keyboard.key = xx scan_code;
+
+            if scan_code >= 0x80 && scan_code < 0xe0 {
+                msg.keyboard.key = xx (scan_code - 0x80);
+                msg.keyboard.event = .RELEASED;
+            } else if scan_code >= 0xe0 + 0x80 {
+                msg.keyboard.key = xx (scan_code - 0x80);
+                msg.keyboard.event = .RELEASED;
+            }
+            return msg;
         }
 
         mouse_event := read_event_buffer(*current_task.parent_process.mouse_events);
         if mouse_event.event != .NONE {
-            result.kind = .MOUSE;
-            result.mouse_event = mouse_event;
-            return result;
+            msg.kind = .MOUSE;
+            msg.mouse = mouse_event;
+            return msg;
         }
 
-        return result;
+        return msg;
     }
 
     push_context syscall_context {
@@ -2087,10 +2108,24 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             yield();
         }
 
-        else if data.rax == xx QWERTYUIOP_RUN_COMMAND {
-            text: string;
-            text.data = xx data.rbx;
-            text.count = xx data.rcx;
+        else if data.rax == xx GET_MOUSE_POSITION {
+            window := cast(Window_Handle) data.rdx;
+
+            if window != INVALID_WINDOW_HANDLE {
+                hit := get_window_at(mouse.position_x, mouse.position_y);
+
+                if hit == window && valid_alive_and_owned(window) {
+                    << cast(*int) data.rdi = mouse.position_x - windows[window].blitter.draw.x;
+                    << cast(*int) data.rcx = mouse.position_y - windows[window].blitter.draw.y;
+                } else {
+                    << cast(*int) data.rdi = -1;
+                    << cast(*int) data.rcx = -1;
+                }
+
+            } else {
+                << cast(*int) data.rdi = mouse.position_x;
+                << cast(*int) data.rcx = mouse.position_y;
+            }
         }
 
         else assert(false, Basic.tprint("Not a syscall number: %", data.rax));
@@ -2112,8 +2147,8 @@ Hardware_Device :: struct {
 Message :: struct {
     kind: Message_Kind;
     using data: union {
-        keyboard_scan_code: u16;
-        mouse_event: Mouse_Event;
+        keyboard: Keyboard_Event;
+        mouse: Mouse_Event;
     };
 }
 
@@ -2122,6 +2157,7 @@ Message_Kind :: enum {
     EXIT;
     KEYBOARD;
     MOUSE;
+    THEME_CHANGED;
 }
 
 Mouse_Event :: struct {
@@ -2133,6 +2169,20 @@ Mouse_Event :: struct {
 
     pixel_position_in_window_x: int;
     pixel_position_in_window_y: int;
+}
+
+Keyboard_Event :: struct {
+    key: u16;
+    event: enum u8 { PRESSED; RELEASED; };
+}
+
+Mouse_Event_Type :: enum {
+    NONE;
+    MOVE_ONLY;
+    BUTTON_1_PRESSED;
+    BUTTON_1_RELEASED;
+    BUTTON_2_PRESSED;
+    BUTTON_2_RELEASED;
 }
 
 dont :: () #expand {
@@ -2218,6 +2268,12 @@ invalid_opcode_exception :: (stack_data: *Interrupt_Data) #c_call {
                 paint_screen();
             }
         }
+        if current_task != *the_first_task {
+            print("Exiting.\n");
+            exit();
+        } else {
+            print("This happened in the kernel. This is a bluescreen except the screen's not blue\n");
+        }
     }
 
     while true #asm { hlt; }
@@ -2286,6 +2342,12 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
             print(" ");
         }
 
+        if current_task != *the_first_task {
+            print("Exiting.\n");
+            exit();
+        } else {
+            print("This happened in the kernel. This is a bluescreen except the screen's not blue\n");
+        }
         paint_screen();
     }
 
@@ -2311,9 +2373,9 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
         paint_screen();
 
         #if PAGE_FAULT_STACK_TRACE {
-            if current_task && current_task.the_context {
+//            if current_task && current_task.the_context {
                 print("\nStack trace:\n");
-                node := current_task.the_context.stack_trace;
+                node := the_kernel_context.stack_trace;
                 while node {
                     if node.info != null {
                         print("In file \"");
@@ -2328,7 +2390,19 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
                     node = node.next;
                 }
                 paint_screen();
+//            }
+        }
+
+        print("\n\nMemory around the instruction pointer:\n");
+        for -64 .. 63 {
+            if it % 8 == 0 {
+                print("\n");
+                if it == 0 print_hex(stack_data.ip + xx it, color = theme.accent);
+                else print_hex(stack_data.ip + xx it);
+                print(":   ");
             }
+            print_hex((cast(*u8) stack_data.ip)[it], decorate = false);
+            print(" ");
         }
 
         print("Memory around the stack pointer:\n");
@@ -2343,19 +2417,13 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
             print(" ");
         }
 
-        print("Memory around the instruction pointer:\n");
-        for -64 .. 63 {
-            if it % 8 == 0 {
-                print("\n");
-                if it == 0 print_hex(stack_data.ip + xx it, color = theme.accent);
-                else print_hex(stack_data.ip + xx it);
-                print(":   ");
-            }
-            print_hex((cast(*u8) stack_data.ip)[it], decorate = false);
-            print(" ");
-        }
-
         paint_screen();
+        if current_task != *the_first_task {
+            print("Exiting.\n");
+            exit();
+        } else {
+            print("This happened in the kernel. This is a bluescreen except the screen's not blue\n");
+        }
     }
 
     while true #asm { hlt; }

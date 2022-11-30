@@ -368,37 +368,35 @@ switch_to_long_mode:
     pop di
 
     ; === Identity map + virtual mirror ===
-    lea eax, [es:di + 0x1000]
+    lea eax, [di + 0x1000]
     or eax, page_present | page_write
-    mov [es:di], eax
+    mov [di], eax
 
-    lea eax, [es:di + 0x4000]
+    lea eax, [di + 0x4000]
     or eax, page_present | page_write
-    mov [es:di + 0x1ff*8], eax
+    mov [di + 0x1ff*8], eax
 
-    lea eax, [es:di + 0x2000]
+    lea eax, [di + 0x2000]
     or eax, page_present | page_write
-    mov [es:di + 0x1000], eax
+    mov [di + 0x1000], eax
 
-    lea eax, [es:di + 0x5000]
+    lea eax, [di + 0x5000]
     or eax, page_present | page_write
-    mov [es:di + 0x4000 + 0x1fe*8], eax
+    mov [di + 0x4000 + 0x1fe*8], eax
 
     mov eax, page_present | page_write | page_size
-    mov [es:di + 0x5000], eax
+    mov [di + 0x5000], eax
     add eax, 0x200000
-    mov [es:di + 0x5008], eax
+    mov [di + 0x5008], eax
     add eax, 0x200000
-    mov [es:di + 0x5010], eax
+    mov [di + 0x5010], eax
 
     mov eax, page_present | page_write | page_size
-    mov [es:di + 0x2000], eax
+    mov [di + 0x2000], eax
     add eax, 0x200000
-    mov [es:di + 0x2008], eax
+    mov [di + 0x2008], eax
     add eax, 0x200000
-    mov [es:di + 0x2010], eax
-
-
+    mov [di + 0x2010], eax
 
     mov al, 0xff
     out 0xa1, al
@@ -406,6 +404,8 @@ switch_to_long_mode:
 
     nop
     nop
+
+    cli
 
     lidt [idt]
 

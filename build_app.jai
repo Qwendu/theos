@@ -65,7 +65,7 @@ assertion_failed :: (location: Source_Code_Location, message: string) {
 
 END;
 
-build_formosa_app :: (name: string) {
+build_formosa_app :: (name: string, optimize: bool = false) {
 /*    set_build_options_dc(.{do_output = false});
 
     user_args, compiler_args := get_build_options().compile_time_command_line;
@@ -86,6 +86,8 @@ build_formosa_app :: (name: string) {
 
         #if !ENABLE_IST options.disable_redzone = true;
 
+        if optimize set_optimization_level(*options, 3, 3);
+
         options.stack_trace = false;
         options.array_bounds_check = .OFF;
         options.cast\_bounds_check = .OFF;
@@ -93,11 +95,13 @@ build_formosa_app :: (name: string) {
         options.null_pointer_check = .OFF;
         options.dead_code_elimination = .NONE;
 
+        options.llvm_options.disable_inlining = true;
+
         options.text_output_flags = 0;
 
         new_path: [..] string;
-        array_add(*new_path, "modules/");
         array_add(*new_path, ..options.import_path);
+        array_add(*new_path, "modules/");
         options.import_path = new_path;
 
         options.additional_linker_arguments = .["-e", "_formosa_start"];

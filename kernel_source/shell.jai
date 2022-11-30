@@ -15,11 +15,20 @@ handle_keyboard_events :: () {
     }
 }
 
+last_x, last_y: int;
+
 handle_mouse_events :: () {
     while true {
         press := read_event_buffer(*mouse.buffer);
-        // printf("Read event\n");
-        if press == .NONE break;
+
+        if last_x != mouse.position_x || last_y != mouse.position_y {
+            last_x = mouse.position_x;
+            last_y = mouse.position_y;
+        }
+
+        else if press == .NONE break;
+
+        if press == .NONE press = .MOVE_ONLY;
 
         event: Mouse_Event;
         event.event = press;

@@ -6,6 +6,8 @@ modules/Basic/
 modules/File/
 modules/Input/
 modules/.build/*
+modules/Simp/
+modules/Windows.jai
 
 program
 *.lock
@@ -17,6 +19,7 @@ the_work
 todo
 *.zip
 *.vmdk
+.vs/*
 
 files/chess
 files/echo
@@ -46,6 +49,7 @@ files/equals
 files/get_people
 files/mouse_test
 files/key_code_printer
+files/paint
 
 .#*
 
@@ -58,3 +62,5 @@ files/code/x86_64.json
 aaaaaaa.png
 ahci_test
 userspace_apps/chess_engine/_libnnueprobe.a
+userspace/paint.jai
+files/modules_test

@@ -200,8 +200,6 @@ check_win_condition :: () -> bool {
     return false;
 }
 
-// Todo fix castle redrawing
-
 clamp :: (value: int, min: int, max: int) -> int {
     if value > max return max;
     if value < min return min;
@@ -215,7 +213,7 @@ computer_move :: (depth: int) -> bool {
     message := get_message();
     while message.kind != .NONE {
         if message.kind == .KEYBOARD {
-            if message.keyboard_scan_code == .ESC {
+            if message.keyboard.key == .ESC {
                 return false;
             }
         }
@@ -224,13 +222,9 @@ computer_move :: (depth: int) -> bool {
 
     type, from, to := decode_move16(move);
 
-    if type & .King_Castle {
-        draw_square(63 - 0);
-        draw_square(63 - 3);
-    }
-    if type & .Queen_Castle {
-        draw_square(63 - 3);
-        draw_square(63 - 7);
+    using Move16;
+    if type & (King_Castle | Queen_Castle | Ep_Capture) {
+        draw_board();
     }
 
     old := last_move_square;
@@ -253,13 +247,13 @@ human_move :: () -> bool {
         message := get_message();
 
         if message.kind == .KEYBOARD {
-            if message.keyboard_scan_code == .ESC {
+            if message.keyboard.key == .ESC {
                 return false;
             }
             need_repaint = true;
 
             old_square := selected_square;
-            if message.keyboard_scan_code == {
+            if message.keyboard.key == {
                 case .CURSOR_UP;    if selected_square >= 8 selected_square -= 8;
                 case .CURSOR_LEFT;  if selected_square > 0  selected_square -= 1;
                 case .CURSOR_RIGHT; if selected_square < 63 selected_square += 1;
@@ -268,7 +262,7 @@ human_move :: () -> bool {
             draw_square(selected_square);
             draw_square(old_square);
 
-            if message.keyboard_scan_code == .ENTER {
+            if message.keyboard.key == .ENTER {
                 from := cvt_square(selected_square);
 
                 is_valid_start_square := !white_to_move && (chess.pieces[from] > .W_PAWN);
@@ -294,13 +288,9 @@ human_move :: () -> bool {
                             draw_square(cvt_square(from));
                             draw_square(selected_square);
 
-                            if flags & .King_Castle {
-                                draw_square(7);
-                                draw_square(5);
-                            }
-                            if flags & .Queen_Castle {
-                                draw_square(0);
-                                draw_square(3);
+                            using Move16;
+                            if flags & (King_Castle | Queen_Castle | Ep_Capture) {
+                                draw_board();
                             }
                             return true;
                         }

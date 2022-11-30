@@ -291,6 +291,7 @@ move_mouse :: (new_x: int, new_y: int, always := false) {
     for y: 0..cursor_size-1 {
         if new_y + y >= g.screen.height break;
         for x: 0..cursor_size-1 {
+            if new_x + x >= g.screen.width continue;
             alpha   := cast(float) cursor_graphic.data[cursor] / 255;
             border  := cast(float) cursor_graphic.data[cursor + 1] / 255 + alpha;
 

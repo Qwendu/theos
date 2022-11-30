@@ -61,7 +61,7 @@ main :: (filename: string) {
         message := get_message();
 
         if message.kind == .KEYBOARD {
-            code := message.keyboard_scan_code;
+            code := message.keyboard.key;
 
             if code == .ESC {
                 return;

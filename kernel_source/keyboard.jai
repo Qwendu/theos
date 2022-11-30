@@ -33,7 +33,7 @@ write_event_buffer :: (event_buffer: *Event_Buffer($T), event: T) #no_context {
 }
 
 input_key_buffer: Event_Buffer(Keyboard_Scan_Code);
-sitting_on_0xe0: bool;
+pending_0xe0: bool;
 
 
 #program_export
@@ -43,13 +43,13 @@ ps2_interrupt :: () #c_call {
     key: u16 = port_read(Ps2_Port.DATA);
 
     if key == 0xe0 {
-        sitting_on_0xe0 = true;
+        pending_0xe0 = true;
         return;
     }
 
-    if sitting_on_0xe0 {
+    if pending_0xe0 {
         key += 0xe0;
-        sitting_on_0xe0 = false;
+        pending_0xe0 = false;
     }
     write_event_buffer(*input_key_buffer, cast(Keyboard_Scan_Code) key);
 }
@@ -61,14 +61,6 @@ mouse_wait :: ($ is_signal: bool) #no_context {
         #if is_signal if !(port_read(Ps2_Port.STATUS) & 2) return;
         else          if   port_read(Ps2_Port.STATUS) & 1  return;
     }
-}
-
-Mouse_Event_Type :: enum {
-    NONE;
-    BUTTON_1_PRESSED;
-    BUTTON_1_RELEASED;
-    BUTTON_2_PRESSED;
-    BUTTON_2_RELEASED;
 }
 
 mouse: struct {
@@ -169,10 +161,10 @@ ps2_mouse :: () #c_call {
     mouse.position_x += delta_x;
     mouse.position_y -= delta_y;
 
-    mouse.position_x %= VESA_WIDTH;
-    mouse.position_y %= VESA_HEIGHT;
-    while mouse.position_x < 0 mouse.position_x += VESA_WIDTH;
-    while mouse.position_y < 0 mouse.position_y += VESA_HEIGHT;
+    if mouse.position_x >= VESA_WIDTH  mouse.position_x = VESA_WIDTH - 1;
+    if mouse.position_y >= VESA_HEIGHT mouse.position_y = VESA_HEIGHT - 1;
+    if mouse.position_x < 0 mouse.position_x = 0;
+    if mouse.position_y < 0 mouse.position_y = 0;
 }
 
 do_mouse :: true;

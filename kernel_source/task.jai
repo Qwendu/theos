@@ -133,12 +133,20 @@ exit :: () {
     unmap_memory(task.thread_storage_size, cast(u64) task.thread_storage);
 
     task.state = .RETIRED;
+    if shell.foreground_task == task  shell.foreground_task = *the_first_task;
     yield();
 }
 
 
 
 
+valid_alive_and_owned :: (w: Window_Handle) -> bool {
+    if w >= 32 || w < 0 return false;
+    if !windows[w].exists return false;
+    if windows[w].owner != current_task return false;
+
+    return true;
+}
 
 Window_Handle :: s64;
 INVALID_WINDOW_HANDLE : Window_Handle : -1;

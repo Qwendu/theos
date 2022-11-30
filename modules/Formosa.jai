@@ -1,4 +1,4 @@
-
+ 
 // This is the formosa system API, kind of like #include "windows.h"
 
 #scope_export
@@ -28,22 +28,8 @@ Syscall_Numbers :: enum {
     GET_DEVICE_LIST  :: 0x15;
     GET_SPACE_NEEDED_FOR_DEVICE_LIST :: 0x16;
     YIELD :: 0x17;
-    QWERTYUIOP_RUN_COMMAND :: 0x18;
     GET_WINDOW_BUFFER :: 0x19;
-}
-
-qwertyuiop_run_command :: (command: string) {
-    using Syscall_Numbers;
-
-    count := command.count;
-    data := command.data;
-    #asm {
-        mov rbx: gpr === b, data;
-        mov rcx: gpr === c, count;
-        mov rax: gpr === a, QWERTYUIOP_RUN_COMMAND;
-
-        int 0x80;
-    }
+    GET_MOUSE_POSITION :: 0x20;
 }
 
 System_Params :: struct {
@@ -370,45 +356,63 @@ wait_for_message :: () -> Message {
     return message;
 }
 
-get_device_list :: (space: *void) -> [] Hardware_Device {
+// get_device_list :: (space: *void) -> [] Hardware_Device {
+//     using Syscall_Numbers;
+// 
+//     count: int;
+//     _count := *count;
+//     #asm {
+//         mov rcx: gpr === c, _count;
+//         mov rbx: gpr === b, space;
+//         mov rax: gpr === a, GET_DEVICE_LIST;
+// 
+//         int 0x80;
+//     }
+// 
+//     result: [] Hardware_Device;
+//     result.count = count;
+//     result.data = cast(*Hardware_Device) space;
+//     return result;
+// }
+// 
+// get_space_needed_for_device_list :: () -> int {
+//     using Syscall_Numbers;
+// 
+//     result: int;
+//     _result := *result;
+//     #asm {
+//         mov rbx: gpr === b, _result;
+//         mov rax: gpr === a, GET_SPACE_NEEDED_FOR_DEVICE_LIST;
+// 
+//         int 0x80;
+//     }
+// 
+//     return result;
+// }
+
+get_mouse_position :: (in_window := INVALID_WINDOW_HANDLE) -> int, int {
     using Syscall_Numbers;
 
-    count: int;
-    _count := *count;
+    x, y: int;
+    px, py := *x, *y;
+    w := in_window;
+
     #asm {
-        mov rcx: gpr === c, _count;
-        mov rbx: gpr === b, space;
-        mov rax: gpr === a, GET_DEVICE_LIST;
+        mov rdi: gpr === di, px;
+        mov rcx: gpr === c, py;
+        mov rdx: gpr === d, w;
+        mov rax: gpr === a, GET_MOUSE_POSITION;
 
         int 0x80;
     }
 
-    result: [] Hardware_Device;
-    result.count = count;
-    result.data = cast(*Hardware_Device) space;
-    return result;
-}
-
-get_space_needed_for_device_list :: () -> int {
-    using Syscall_Numbers;
-
-    result: int;
-    _result := *result;
-    #asm {
-        mov rbx: gpr === b, _result;
-        mov rax: gpr === a, GET_SPACE_NEEDED_FOR_DEVICE_LIST;
-
-        int 0x80;
-    }
-
-    return result;
+    return x, y;
 }
 
 Message :: struct {
     kind: Message_Kind;
     using data: union {
-        keyboard_scan_code: Keyboard_Scan_Code;
-        key: Keyboard_Scan_Code;
+        keyboard: Keyboard_Event;
         mouse: Mouse_Event;
     };
 }
@@ -419,6 +423,31 @@ Message_Kind :: enum {
     KEYBOARD;
     MOUSE;
     THEME_CHANGED;
+}
+
+Mouse_Event :: struct {
+    event: Mouse_Event_Type;
+
+    maybe_window: Window_Handle;
+    position_x: int;
+    position_y: int;
+
+    position_in_window_x: int;
+    position_in_window_y: int;
+}
+
+Keyboard_Event :: struct {
+    key: Keyboard_Scan_Code;
+    key_event: enum u8 { PRESSED; RELEASED; };
+}
+
+Mouse_Event_Type :: enum {
+    NONE;
+    MOVE_ONLY;
+    BUTTON_1_PRESSED;
+    BUTTON_1_RELEASED;
+    BUTTON_2_PRESSED;
+    BUTTON_2_RELEASED;
 }
 
 Theme :: struct {
@@ -464,55 +493,6 @@ Rich_Text :: struct {
         start_position: int;
         color: u32;
     }
-}
-
-Acpi_Device :: struct {
-    table_header: struct {
-        signature: [4] u8;
-        length: u32;
-        revision: u8;
-        checksum: u8;
-        oem_id: [6] u8;
-        oem_table_id: [8] u8;
-        oem_revision: u32;
-        creator_id: u32;
-        creator_revision: u32;
-    };
-}
-
-Pci_Device :: struct {
-    header: struct {
-        vendor_id:       u16;
-        device_id:       u16;
-        status:          u16;
-        command:         u16;
-        revision_id:     u8;
-        prog_if:         u8;
-        subclass:        u8;
-        class_code:      u8;
-        cache_line_size: u8;
-        latency_timer:   u8;
-        header_type:     u8;
-        bist:            u8;
-    };
-
-    address: struct {
-        bus: u32;
-        index: u32;
-        function: u32;
-    };
-}
-
-Hardware_Device :: struct {
-    type: enum int {
-        ACPI;
-        PCI;
-    };
-
-    using data: union {
-        acpi: Acpi_Device;
-        pci: Pci_Device;
-    };
 }
 
 Keyboard_Scan_Code :: enum u16 {
@@ -631,26 +611,9 @@ Keyboard_Scan_Code :: enum u16 {
     DELETE;
 }
 
-Mouse_Event :: struct {
-    event: enum {
-        NONE;
-        BUTTON_1_PRESSED;
-        BUTTON_1_RELEASED;
-        BUTTON_2_PRESSED;
-        BUTTON_2_RELEASED;
-    }
-
-    maybe_window: Window_Handle;
-    position_x: int;
-    position_y: int;
-
-    position_in_window_x: int;
-    position_in_window_y: int;
-}
-
-
 #scope_module
 
+#program_export
 crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
     #asm {
         cld;
@@ -664,6 +627,7 @@ crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
     return target;
 }
 
+#program_export
 crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     #asm {
         cld;
@@ -677,6 +641,7 @@ crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     return dst;
 }
 
+#program_export
 crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
     for 0..(cast(s64) count)-1 {
         if a[it] != b[it] {
