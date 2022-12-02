@@ -23,7 +23,7 @@ Task_Info :: struct {
     };
 
     parent_process: struct {
-        input: Event_Buffer(Keyboard_Scan_Code);
+        input: Event_Buffer(Keyboard_Event);
         mouse_events: Event_Buffer(Mouse_Event);
 
         input_data: Any;

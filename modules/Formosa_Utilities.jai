@@ -1,38 +1,8 @@
 
-// This file is for codes that are not the system API directly, but they are very useful for writing or porting programs
-
 #scope_module
-#import "Formosa"; // To redirect write_string
+#import "Formosa";
 
 #scope_export
-
-// Utility routines for: getting the value of a field, or an array of values
-// Extracting text
-// Extracting a file name
-
-// for_expansion :: (any: Any, body: Code, flags: For_Flags) #expand {
-// //    assert(any.type.type == .ARRAY, "Looping over any must be an array");
-//     tia := cast(*Type_Info_Array) any.type;
-// 
-//     stride := tia.element_type.runtime_size;
-//     array := cast(*[] void) input_data.value_pointer;
-// 
-//     for n: 0..array.count-1 {
-//         element: Any;
-//         element.type = tia.element_type;
-//         element.data = array.data + stride * n;
-//         `it_index := n;
-//         `it := any;
-// 
-//         #insert body;
-//     }
-// }
-
-// get_integer :: (any: Any) -> int {
-//     if any.type.type == .INTEGER {
-// 
-//     }
-// }
 
 Pnm :: struct {
     width: int;
@@ -148,80 +118,3 @@ write_hex :: (number: u16) {
     }
     write_string(xx result);
 }
-
-// Would like to have calendar stuff here, but don't want to include basic
-/*
-#import "Basic";
-
-formosa_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
-
-    APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
-    milliseconds := to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);
-
-    seconds      := milliseconds / 1000;
-    minutes      := seconds      / 60;
-    hours        := minutes      / 60;
-    total_days   := hours        / 24;
-
-    milliseconds -= seconds      * 1000;
-    seconds      -= minutes      * 60;
-    minutes      -= hours        * 60;
-    hours        -= total_days   * 24;
-
-    years := total_days / 365;
-    leap_year_count := leap_years_before(years + 2);
-
-    years = (total_days - leap_year_count * 366) / 365;
-    years += leap_year_count;
-
-    days := total_days - (years - leap_year_count) * 365;
-    days -= leap_year_count * 366;
-
-    years += 1970;
-    is_leap_year := (years % 4 == 0) && (!(years % 100 == 0) || (years % 400 == 0));
-    if is_leap_year && days < 59 days += 1;
-
-    ct: Calendar_Time;
-
-    days_in_month := int.[
-        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
-    ];
-
-    month: int;
-    for days_in_month {
-        month += 1;
-
-        if days >= it {
-            days -= it;
-        } else {
-            month = xx it_index;
-            break;
-        }
-    }
-
-    ct.year = xx years;
-    // is_leap_year := (ct.year % 4 == 0) && (!(ct.year % 100 == 0) || (ct.year % 400 == 0));
-    // if is_leap_year && month < 2 month_day += 1;
-
-    ct.day_of_week_starting_at_0 = xx ((4 + total_days) % 7);
-
-    ct.month_starting_at_0 = xx month;
-    ct.day_of_month_starting_at_0 = xx days;
-
-    ct.hour = xx hours;
-    ct.minute = xx minutes;
-    ct.second = xx seconds;
-    ct.millisecond = xx milliseconds;
-    return ct;
-}
-
-leap_years_before :: (year: s64) -> s64 {
-    floor_div :: (dividend: int, $ divisor: int) -> int {
-        offset := cast(int) (dividend <= 0 && dividend % divisor);
-        return dividend / divisor - offset;
-    }
-
-    result := floor_div(year, 4) - floor_div(year, 100) + floor_div(year, 400);
-    return result;
-}
-*/

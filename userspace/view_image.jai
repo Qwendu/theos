@@ -34,7 +34,7 @@ main :: (file_name: string) {
     while true {
         message := wait_for_message();
         if message.kind == .KEYBOARD {
-            if message.keyboard.key == .ESC {
+            if message.keyboard.key == .ESCAPE {
                 break;
             }
         }

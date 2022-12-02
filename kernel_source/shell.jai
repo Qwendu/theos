@@ -1,14 +1,16 @@
 
 handle_keyboard_events :: () {
     while true {
-        scan_code := read_event_buffer(*input_key_buffer);
-        if scan_code == .NONE break;
-        if scan_code == .FLAG || shell.flag_held {
-            write_event_buffer(*the_first_task.parent_process.input, scan_code);
+        event, success := read_event_buffer(*input_key_buffer);
+        key_code := event.key;
+        if !success break;
+
+        if key_code == .FLAG || shell.flag_held {
+            write_event_buffer(*the_first_task.parent_process.input, event);
             continue;
         }
 
-        write_event_buffer(*shell.foreground_task.parent_process.input, scan_code);
+        write_event_buffer(*shell.foreground_task.parent_process.input, event);
         if shell.foreground_task.state == .WAITING_FOR_MESSAGE {
             shell.foreground_task.state = .AWAKE;
         }
@@ -232,41 +234,42 @@ shell_handle_mouse :: () {
 }
 
 shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = "" {
-    scan_code := read_event_buffer(*the_first_task.parent_process.input);
-    if scan_code == .NONE return;
+    event, success := read_event_buffer(*the_first_task.parent_process.input);
+    key_code := event.key;
+    if key_code == .UNKNOWN return;
+    if !success return;
 
     need_repaint: bool;
     while true {
-        key := cast(u16) scan_code;
+        key := cast(u16) key_code;
 
-        if key >= 0x80 && key <= 0xe0 {
-            scan_code -= xx 0x80;
-            if scan_code == .LSHIFT || scan_code == .RSHIFT {
+        if event.type == .RELEASED {
+            if key_code == .SHIFT || key_code == .RIGHT_SHIFT {
                 shell.shift_held = false;
             }
 
-            else if scan_code == .CTRL {
+            else if key_code == .CTRL {
                 shell.ctrl_held = false;
             }
         }
 
-        else if scan_code == .FLAG {
+        else if key_code == .FLAG {
             shell.flag_held = true;
         }
 
-        else if scan_code == (Keyboard_Scan_Code.FLAG + 0x80) {
-            shell.flag_held = false;
-        }
+        // else if key_code == (Key_Code.FLAG + 0x80) {
+        //     shell.flag_held = false;
+        // }
 
-        else if scan_code == .LSHIFT || scan_code == .RSHIFT {
+        else if key_code == .SHIFT || key_code == .RIGHT_SHIFT {
             shell.shift_held = true;
         }
 
-        else if scan_code == .CTRL {
+        else if key_code == .CTRL {
             shell.ctrl_held = true;
         }
 
-        else if scan_code == .ENTER {
+        else if key_code == .ENTER {
             command: string;
             command.data = shell.command_text.buffer + 2;
             command.count = shell.command_text.used - 2;
@@ -301,7 +304,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             shell.history_index = shell.history.count;
         }
 
-        else if !shell.ctrl_held && scan_code == .CURSOR_UP {
+        else if !shell.ctrl_held && key_code == .ARROW_UP {
             if !shell.history.count return;
 
             shell.history_index -= 1;
@@ -314,7 +317,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             need_repaint = true;
         }
 
-        else if !shell.ctrl_held && scan_code == .CURSOR_DOWN {
+        else if !shell.ctrl_held && key_code == .ARROW_DOWN {
             shell.history_index += 1;
 
             if shell.history_index >= shell.history.count {
@@ -331,7 +334,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             need_repaint = true;
         }
 
-        else if scan_code == .BACKSPACE {
+        else if key_code == .BACKSPACE {
             if !is_reading_string if shell.command_text.used > 2 {
                 need_repaint = true;
                 if shell.ctrl_held {
@@ -351,7 +354,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             }
         }
 
-        else if shell.flag_held && scan_code == .TAB {
+        else if shell.flag_held && key_code == .TAB {
             shell.foreground_task = shell.foreground_task.next;
             for *windows {
                 if it.exists && it.owner == shell.foreground_task {
@@ -361,7 +364,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             }
         }
 
-        else if scan_code == .TAB {
+        else if key_code == .TAB {
             // calendar := cmos_get_calendar_time();
             // printf("The CMOS time is %.\n", Basic.calendar_to_string(calendar));
             // 
@@ -376,7 +379,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             }
         }
 
-        else if scan_code == .C && shell.ctrl_held {
+        else if key_code == xx #char "C" && shell.ctrl_held {
             clear_text_viewer(*shell.command_text);
             write_to_text_viewer(*shell.command_text, "> ");
             update_syntax_highlighting();
@@ -384,48 +387,48 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             need_repaint = true;
        }
 
-        else if scan_code == .CURSOR_UP {
+        else if key_code == .ARROW_UP {
             shell.text.scroll_position -= 5;
             shell.text.draw.dirty = true;
             shell.command_text.draw.dirty = true;
             need_repaint = true;
       }
 
-        else if scan_code == .CURSOR_DOWN {
+        else if key_code == .ARROW_DOWN {
             shell.text.scroll_position += 5;
             shell.text.draw.dirty = true;
             shell.command_text.draw.dirty = true;
             need_repaint = true;
        }
 
-        else if scan_code == .ESC {};
+        else if key_code == .ESCAPE {};
 
         else {
-            if key >= scan_table.count key = 0;
-
-            char: string;
-            if shell.shift_held {
-                char.data = *scan_table_shifted[key];
-            } else {
-                char.data = *scan_table[key];
-            }
-            char.count = 1;
+            // if key >= scan_table.count key = 0;
+            char: [1] u8;
+            // if shell.shift_held {
+            //     char.data = *scan_table_shifted[key];
+            // } else {
+            //     char.data = *scan_table[key];
+            // }
+            char[0] = key_code_to_ascii(key_code, shell.shift_held);
             need_repaint = true;
 
-            if << char.data != 0 {
+            if char[0] != 0 {
                 if shell.text.scroll_position != 0 {
                     shell.text.scroll_position = 0;
                     shell.text.draw.dirty = true;
                     shell.command_text.draw.dirty = true;
                 }
 
-                write_to_text_viewer(*shell.command_text, char);
+                write_to_text_viewer(*shell.command_text, xx char);
                 update_syntax_highlighting();
             }
         }
 
-        scan_code = read_event_buffer(*the_first_task.parent_process.input);
-        if scan_code == .NONE break;
+        event, success = read_event_buffer(*the_first_task.parent_process.input);
+        if !success break;
+        key_code = event.key;
     }
 
     if need_repaint paint_screen();

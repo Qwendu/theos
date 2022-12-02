@@ -63,11 +63,21 @@ main :: (filename: string) {
         if message.kind == .KEYBOARD {
             code := message.keyboard.key;
 
-            if code == .ESC {
+            if message.keyboard.type == .RELEASED {
+                if code == .SHIFT || code == .RIGHT_SHIFT {
+                    shifted = false;
+                }
+
+                if code == .CTRL {
+                    control = false;
+                }
+            }
+
+            else if code == .ESCAPE {
                 return;
             }
 
-            else if code == .LSHIFT || code == .RSHIFT {
+            else if code == .SHIFT || code == .RIGHT_SHIFT {
                 shifted = true;
             }
 
@@ -75,12 +85,12 @@ main :: (filename: string) {
                 control = true;
             }
 
-            else if code == .CURSOR_LEFT {
+            else if code == .ARROW_LEFT {
                 if cursor_pos > 0 cursor_pos -= 1;
                 repaint_needed = true;
             }
 
-            else if code == .CURSOR_RIGHT {
+            else if code == .ARROW_RIGHT {
                 if cursor_pos < used cursor_pos += 1;
                 repaint_needed = true;
             }
@@ -136,24 +146,13 @@ main :: (filename: string) {
                 }
 
                 else {
-                    if code == .S && filename.count {
+                    if code == #char "S" && filename.count {
                         contents: [] u8;
                         contents.data = buffer;
                         contents.count = used;
                         create_file(filename);
                         write_file(filename, contents);
                     }
-                }
-            }
-
-            else if code >= 0x80 {
-                code -= xx 0x80;
-                if code == .LSHIFT || code == .RSHIFT {
-                    shifted = false;
-                }
-
-                if code == .CTRL {
-                    control = false;
                 }
             }
         }

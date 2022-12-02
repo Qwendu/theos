@@ -1843,19 +1843,10 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         msg: Message;
         msg.kind = .NONE;
 
-        scan_code := read_event_buffer(*current_task.parent_process.input);
-        if scan_code != .NONE {
+        event, success := read_event_buffer(*current_task.parent_process.input);
+        if success {
             msg.kind = .KEYBOARD;
-            msg.keyboard.event = .PRESSED;
-            msg.keyboard.key = xx scan_code;
-
-            if scan_code >= 0x80 && scan_code < 0xe0 {
-                msg.keyboard.key = xx (scan_code - 0x80);
-                msg.keyboard.event = .RELEASED;
-            } else if scan_code >= 0xe0 + 0x80 {
-                msg.keyboard.key = xx (scan_code - 0x80);
-                msg.keyboard.event = .RELEASED;
-            }
+            msg.keyboard = event;
             return msg;
         }
 
@@ -2172,8 +2163,8 @@ Mouse_Event :: struct {
 }
 
 Keyboard_Event :: struct {
-    key: u16;
-    event: enum u8 { PRESSED; RELEASED; };
+    key: Key_Code;
+    type: enum u8 { PRESSED; RELEASED; };
 }
 
 Mouse_Event_Type :: enum {

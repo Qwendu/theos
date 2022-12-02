@@ -23,7 +23,7 @@ main :: () {
         while true {
             message := get_message();
             if message.kind == .NONE break;
-            if message.kind == .KEYBOARD && message.keyboard.key == .ESC {
+            if message.kind == .KEYBOARD && message.keyboard.key == .ESCAPE {
                 return;
             }
         }

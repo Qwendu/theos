@@ -9,18 +9,18 @@ Event_Buffer :: struct (T: Type) {
     write_index: int;
 }
 
-read_event_buffer :: (event_buffer: *Event_Buffer($T)) -> T {
+read_event_buffer :: (event_buffer: *Event_Buffer($T)) -> T, bool {
     using event_buffer;
 
     default: T;
-    if read_index == write_index return default;
+    if read_index == write_index return default, false;
 
     event := buffer[read_index];
 
     read_index += 1;
     read_index %= size;
 
-    return event;
+    return event, true;
 }
 
 write_event_buffer :: (event_buffer: *Event_Buffer($T), event: T) #no_context {
@@ -32,7 +32,7 @@ write_event_buffer :: (event_buffer: *Event_Buffer($T), event: T) #no_context {
     write_index %= size;
 }
 
-input_key_buffer: Event_Buffer(Keyboard_Scan_Code);
+input_key_buffer: Event_Buffer(Keyboard_Event);
 pending_0xe0: bool;
 
 
@@ -41,6 +41,7 @@ ps2_interrupt :: () #c_call {
     defer pic_end_of_interrupt(.PS2_KEYBOARD);
 
     key: u16 = port_read(Ps2_Port.DATA);
+
 
     if key == 0xe0 {
         pending_0xe0 = true;
@@ -51,7 +52,18 @@ ps2_interrupt :: () #c_call {
         key += 0xe0;
         pending_0xe0 = false;
     }
-    write_event_buffer(*input_key_buffer, cast(Keyboard_Scan_Code) key);
+
+    event: Keyboard_Event;
+
+    if key >= 0x80 && key <= 0xe0 {
+        event.key = get_key_code(xx (key - 0x80));
+        event.type = .RELEASED;
+    } else {
+        event.key = get_key_code(xx key);
+        event.type = .PRESSED;
+    }
+
+    write_event_buffer(*input_key_buffer, event);
 }
 
 mouse_wait :: ($ is_signal: bool) #no_context {
@@ -98,6 +110,7 @@ Ps2_Controller_Cmd :: enum {
     WRITE_CONFIG_BYTE :: 0x60;
     ENABLE_SECOND_PS2_PORT :: 0xa8;
     WRITE_MOUSE_COMMAND :: 0xd4;
+
 }
 
 Mouse_Packet :: enum_flags {
@@ -183,12 +196,6 @@ enable_ps2 :: () {
         break;
     }
 
-    scan_table.count = count;
-    scan_table.data = layout.data;
-
-    scan_table_shifted.count = count;
-    scan_table_shifted.data = layout.data + count + 1;
-
     #if !do_mouse return;
 
     mouse_wait(true);
@@ -232,11 +239,7 @@ enable_ps2 :: () {
     input_key_buffer.read_index = input_key_buffer.write_index;
 }
 
-scan_table: string;
-scan_table_shifted: string;
-
-// Why are we using scan code set 1? Is that just what some things happen to default to?
-Keyboard_Scan_Code :: enum u16 {
+Ps2_Scan_Code :: enum u16 {
     NONE;
     ESC;
     NUM1;
@@ -352,4 +355,220 @@ Keyboard_Scan_Code :: enum u16 {
     DELETE;
     FLAG            :: E0_PREFIX_OFFSET + 0x5b;
     RIGHT_FLAG      :: E0_PREFIX_OFFSET + 0x5c;
+}
+
+
+
+
+
+
+
+key_code_to_ascii :: (key: Key_Code, shift: bool = false) -> u8 {
+    if key < 31 || key > 126 return 0;
+
+    if key >= #char "A" && key <= #char "Z" {
+        if shift return xx key;
+        else return xx key + cast(u8) (#char "a" - #char "A");
+    }
+
+    if !shift return xx key;
+    if key >= #char "#" && key <= #char "=" {
+        return "~\0\0\0@\0\0\0\0<_>?)!\"£$%^&*(\0:\0+"[key - #char "#"];
+    }
+
+    if key == #char "[" return #char "{";
+    if key == #char "\\" return #char "|";
+    if key == #char "]" return #char "}";
+    // if key == #char "`" return #char "¬";
+
+    return 0;
+}
+
+GAMEPAD_BUTTON_COUNT :: 32;
+
+Key_Code :: enum u32 {
+    UNKNOWN :: 0;
+
+    BACKSPACE   :: 8;
+    TAB         :: 9;
+    LINEFEED    :: 10;
+    ENTER       :: 13;
+    ESCAPE      :: 27;
+    SPACEBAR    :: 32;
+    
+    DELETE      :: 127;
+
+    ARROW_UP    :: 128;
+    ARROW_DOWN  :: 129;
+    ARROW_LEFT  :: 130;
+    ARROW_RIGHT :: 131;
+
+    PAGE_UP     :: 132;
+    PAGE_DOWN   :: 133;
+
+    HOME        :: 134;
+    END         :: 135;
+
+    INSERT      :: 136;
+
+    PAUSE       :: 137;
+    SCROLL_LOCK :: 138;
+    
+    ALT;
+    CTRL;
+    SHIFT;
+    
+    F1;         
+    F2;
+    F3;
+    F4;
+    F5;
+    F6;
+    F7;
+    F8;
+    F9;
+    F10;
+    F11;
+    F12;
+    F13;
+    F14;
+    F15;
+    F16;
+    F17;
+    F18;
+    F19;
+    F20;
+    F21;
+    F22;
+    F23;
+    F24;
+
+    PRINT_SCREEN;
+
+    MOUSE_BUTTON_LEFT;
+    MOUSE_BUTTON_MIDDLE;
+    MOUSE_BUTTON_RIGHT;
+
+    MOUSE_WHEEL_UP;
+    MOUSE_WHEEL_DOWN;
+
+    GAMEPAD_0_BEGIN;
+    GAMEPAD_0_END :: GAMEPAD_0_BEGIN + xx GAMEPAD_BUTTON_COUNT;
+    GAMEPAD_1_BEGIN;
+    GAMEPAD_1_END :: GAMEPAD_1_BEGIN + xx GAMEPAD_BUTTON_COUNT;
+    GAMEPAD_2_BEGIN;
+    GAMEPAD_2_END :: GAMEPAD_2_BEGIN + xx GAMEPAD_BUTTON_COUNT;
+    GAMEPAD_3_BEGIN;
+    GAMEPAD_3_END :: GAMEPAD_3_BEGIN + xx GAMEPAD_BUTTON_COUNT;
+
+    RIGHT_ALT;
+    RIGHT_CTRL;
+    RIGHT_SHIFT;
+
+    FLAG;
+    RIGHT_FLAG;
+
+    NUMLOCK;
+
+    KEYPAD_7;
+    KEYPAD_8;
+    KEYPAD_9;
+    KEYPAD_4;
+    KEYPAD_5;
+    KEYPAD_6;
+    KEYPAD_1;
+    KEYPAD_2;
+    KEYPAD_3;
+    KEYPAD_0;
+
+    KEYPAD_MINUS;
+    KEYPAD_PLUS;
+    KEYPAD_PERIOD;
+    KEYPAD_ENTER;
+
+    MUTE;
+    CALCULATOR;
+    PLAY;
+    STOP;
+    WWW;
+    PREVIOUS_TRACK;
+    NEXT_TRACK;
+
+    KEY_CODE_COUNT;
+}
+
+ps2_to_ascii :: "\0\01234567890-=\0\tQWERTYUIOP[]\0\0ASDFGHJKL;'`\0#ZXCVBNM,./\0\0\0 ";
+//                \01234567890-=  qwertyuiop[]  asdfghjkl;'` #zxcvbnm,./ *   function k  789-456+1230.  \ey
+//                \0!"£$%^&*()_+  QWERTYUIOP{}  ASDFGHJKL:@| ~ZXCVBNM<>? *   FUNCTION K  789-456+1230.  |EY
+
+get_key_code :: (key: Ps2_Scan_Code) -> Key_Code #no_context {
+    // if current_task && current_task.the_context push_context current_task.the_context { printf("%\n", key); }
+    if xx key < ps2_to_ascii.count {
+        char := ps2_to_ascii[key];
+
+        if char != 0  return xx char;
+    }
+
+    using Key_Code;
+
+    if key == .HOME         return HOME;
+    if key == .CURSOR_END   return END;
+    if key == .SCROLLLOCK   return SCROLL_LOCK;
+    if key == .PAGE_UP      return PAGE_UP;
+    if key == .PAGE_DOWN    return PAGE_DOWN;
+    if key == .CURSOR_LEFT  return ARROW_LEFT;
+    if key == .CURSOR_RIGHT return ARROW_RIGHT;
+    if key == .CURSOR_UP    return ARROW_UP;
+    if key == .CURSOR_DOWN  return ARROW_DOWN;
+    if key == .ALT          return ALT;
+    if key == .LSHIFT       return SHIFT;
+    if key == .CTRL         return CTRL;
+    if key == .MM_ALTGR     return RIGHT_ALT;
+    if key == .RSHIFT       return RIGHT_SHIFT;
+    if key == .RCONTROL     return RIGHT_CTRL;
+    if key == .BACKSPACE    return BACKSPACE;
+    if key == .DELETE       return DELETE;
+    if key == .INSERT       return INSERT;
+    if key == .ESC          return ESCAPE;
+    if key == .ENTER        return ENTER;
+    if key == .TAB          return TAB;
+
+    if (key >= .F1) && (key <= .F10) {
+        delta := key - .F1;
+        return xx(F1 + xx delta);
+    }
+
+    if key == .ISO_BACKSLASH return #char "\\";
+    if key == .F11 return F11;
+    if key == .F12 return F12;
+
+    /*
+    NUMLOCK;
+
+    KEYPAD_7;
+    KEYPAD_8;
+    KEYPAD_9;
+    KEYPAD_4;
+    KEYPAD_5;
+    KEYPAD_6;
+    KEYPAD_1;
+    KEYPAD_2;
+    KEYPAD_3;
+    KEYPAD_0;
+
+    KEYPAD_MINUS;
+    KEYPAD_PLUS;
+    KEYPAD_PERIOD;
+    KEYPAD_ENTER;
+
+    MUTE;
+    CALCULATOR;
+    PLAY;
+    STOP;
+    WWW;
+    PREVIOUS_TRACK;
+    NEXT_TRACK;
+    */
+
+    return UNKNOWN;
 }

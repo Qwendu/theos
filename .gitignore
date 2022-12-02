@@ -64,3 +64,4 @@ ahci_test
 userspace_apps/chess_engine/_libnnueprobe.a
 userspace/paint.jai
 files/modules_test
+files/system/keyboard_layouts/ansi_us_qwerty.xml

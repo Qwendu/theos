@@ -429,16 +429,16 @@ Mouse_Event :: struct {
     event: Mouse_Event_Type;
 
     maybe_window: Window_Handle;
-    position_x: int;
-    position_y: int;
+    pixel_position_x: int;
+    pixel_position_y: int;
 
-    position_in_window_x: int;
-    position_in_window_y: int;
+    pixel_position_in_window_x: int;
+    pixel_position_in_window_y: int;
 }
 
 Keyboard_Event :: struct {
-    key: Keyboard_Scan_Code;
-    key_event: enum u8 { PRESSED; RELEASED; };
+    key: Key_Code;
+    type: enum u8 { PRESSED; RELEASED; };
 }
 
 Mouse_Event_Type :: enum {
@@ -495,67 +495,41 @@ Rich_Text :: struct {
     }
 }
 
-Keyboard_Scan_Code :: enum u16 {
-    NONE;
-    ESC;
-    NUM1;
-    NUM2;
-    NUM3;
-    NUM4;
-    NUM5;
-    NUM6;
-    NUM7;
-    NUM8;
-    NUM9;
-    NUM0;
-    DASH;
-    EQUAL;
-    BACKSPACE;
-    TAB;
-    Q;
-    W;
-    E;
-    R;
-    T;
-    Y;
-    U;
-    I;
-    O;
-    P;
-    OPEN_BRACKET;
-    CLOSED_BRACKET;
-    ENTER;
-    CTRL;
-    A;
-    S;
-    D;
-    F;
-    G;
-    H;
-    J;
-    K;
-    L;
-    SEMICOLON;
-    APOSTROPHE;
-    BACKTICK;
-    LSHIFT;
-    BACKSLASH;
-    Z;
-    X;
-    C;
-    V;
-    B;
-    N;
-    M;
-    COMMA;
-    PERIOD;
-    FORWARDSLASH;
-    RSHIFT;
-    ASTERISK;
+GAMEPAD_BUTTON_COUNT :: 32;
+
+Key_Code :: enum u32 {
+    UNKNOWN     :: 0;
+
+    BACKSPACE   :: 8;
+    TAB         :: 9;
+    LINEFEED    :: 10;
+    ENTER       :: 13;
+    ESCAPE      :: 27;
+    SPACEBAR    :: 32;
+    
+    DELETE      :: 127;
+
+    ARROW_UP    :: 128;
+    ARROW_DOWN  :: 129;
+    ARROW_LEFT  :: 130;
+    ARROW_RIGHT :: 131;
+
+    PAGE_UP     :: 132;
+    PAGE_DOWN   :: 133;
+
+    HOME        :: 134;
+    END         :: 135;
+
+    INSERT      :: 136;
+
+    PAUSE       :: 137;
+    SCROLL_LOCK :: 138;
+    
     ALT;
-    SPACE;
-    CAPSLOCK;
-    F1;
+    CTRL;
+    SHIFT;
+    
+    F1;         
     F2;
     F3;
     F4;
@@ -565,50 +539,73 @@ Keyboard_Scan_Code :: enum u16 {
     F8;
     F9;
     F10;
-    NUMLOCK;
-    SCROLLLOCK;
-    KEYPAD7;
-    KEYPAD8;
-    KEYPAD9;
-    KEYPAD_MINUS;
-    KEYPAD4;
-    KEYPAD5;
-    KEYPAD6;
-    KEYPAD_PLUS;
-    KEYPAD1;
-    KEYPAD2;
-    KEYPAD3;
-    KEYPAD0;
-    KEYPAD_PERIOD;
-
-    F11 :: 0x57;
+    F11;
     F12;
+    F13;
+    F14;
+    F15;
+    F16;
+    F17;
+    F18;
+    F19;
+    F20;
+    F21;
+    F22;
+    F23;
+    F24;
 
+    PRINT_SCREEN;
 
-    E0_PREFIX_OFFSET :: 0xe0;
-    MM_PREV_TRACK   :: E0_PREFIX_OFFSET + 0x10;
-    MM_NEXT_TRACK   :: E0_PREFIX_OFFSET + 0x19;
-    KEYPAD_ENTER    :: E0_PREFIX_OFFSET + 0x1c;
-    RCONTROL;
-    MM_MUTE         :: E0_PREFIX_OFFSET + 0x20;
-    MM_CALC;
-    MM_PLAY;
-    MM_STOP;
-    MM_VOL_DOWN     :: E0_PREFIX_OFFSET + 0x2e;
-    MM_VOL_UP       :: E0_PREFIX_OFFSET + 0x30;
-    MM_WWW_HOME     :: E0_PREFIX_OFFSET + 0x32;
-    MM_FORWARDSLASH :: E0_PREFIX_OFFSET + 0x35;
-    MM_ALTGR        :: E0_PREFIX_OFFSET + 0x38;
-    HOME            :: E0_PREFIX_OFFSET + 0x47;
-    CURSOR_UP;
-    PAGE_UP;
-    CURSOR_LEFT     :: E0_PREFIX_OFFSET + 0x4b;
-    CURSOR_RIGHT    :: E0_PREFIX_OFFSET + 0x4d;
-    CURSOR_END      :: E0_PREFIX_OFFSET + 0x4f;
-    CURSOR_DOWN;
-    PAGE_DOWN;
-    INSERT;
-    DELETE;
+    MOUSE_BUTTON_LEFT;
+    MOUSE_BUTTON_MIDDLE;
+    MOUSE_BUTTON_RIGHT;
+
+    MOUSE_WHEEL_UP;
+    MOUSE_WHEEL_DOWN;
+
+    GAMEPAD_0_BEGIN;
+    GAMEPAD_0_END :: GAMEPAD_0_BEGIN + xx GAMEPAD_BUTTON_COUNT;
+    GAMEPAD_1_BEGIN;
+    GAMEPAD_1_END :: GAMEPAD_1_BEGIN + xx GAMEPAD_BUTTON_COUNT;
+    GAMEPAD_2_BEGIN;
+    GAMEPAD_2_END :: GAMEPAD_2_BEGIN + xx GAMEPAD_BUTTON_COUNT;
+    GAMEPAD_3_BEGIN;
+    GAMEPAD_3_END :: GAMEPAD_3_BEGIN + xx GAMEPAD_BUTTON_COUNT;
+
+    RIGHT_ALT;
+    RIGHT_CTRL;
+    RIGHT_SHIFT;
+
+    FLAG;
+    RIGHT_FLAG;
+
+    NUMLOCK;
+
+    KEYPAD_7;
+    KEYPAD_8;
+    KEYPAD_9;
+    KEYPAD_4;
+    KEYPAD_5;
+    KEYPAD_6;
+    KEYPAD_1;
+    KEYPAD_2;
+    KEYPAD_3;
+    KEYPAD_0;
+
+    KEYPAD_MINUS;
+    KEYPAD_PLUS;
+    KEYPAD_PERIOD;
+    KEYPAD_ENTER;
+
+    MUTE;
+    CALCULATOR;
+    PLAY;
+    STOP;
+    WWW;
+    PREVIOUS_TRACK;
+    NEXT_TRACK;
+
+    KEY_CODE_COUNT;
 }
 
 #scope_module

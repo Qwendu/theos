@@ -213,7 +213,7 @@ computer_move :: (depth: int) -> bool {
     message := get_message();
     while message.kind != .NONE {
         if message.kind == .KEYBOARD {
-            if message.keyboard.key == .ESC {
+            if message.keyboard.key == .ESCAPE {
                 return false;
             }
         }
@@ -247,17 +247,17 @@ human_move :: () -> bool {
         message := get_message();
 
         if message.kind == .KEYBOARD {
-            if message.keyboard.key == .ESC {
+            if message.keyboard.key == .ESCAPE {
                 return false;
             }
             need_repaint = true;
 
             old_square := selected_square;
             if message.keyboard.key == {
-                case .CURSOR_UP;    if selected_square >= 8 selected_square -= 8;
-                case .CURSOR_LEFT;  if selected_square > 0  selected_square -= 1;
-                case .CURSOR_RIGHT; if selected_square < 63 selected_square += 1;
-                case .CURSOR_DOWN;  if selected_square <= (63 - 8) selected_square += 8;
+                case .ARROW_UP;    if selected_square >= 8 selected_square -= 8;
+                case .ARROW_LEFT;  if selected_square > 0  selected_square -= 1;
+                case .ARROW_RIGHT; if selected_square < 63 selected_square += 1;
+                case .ARROW_DOWN;  if selected_square <= (63 - 8) selected_square += 8;
             }
             draw_square(selected_square);
             draw_square(old_square);
