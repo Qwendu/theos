@@ -272,6 +272,8 @@ build_formosa_app :: (name: string, optimize: bool = false) {
         header.elf_offset += builder_string_length(*type_table);
         header.elf_offset += 8 - (header.elf_offset % 8);
 
+        make_directory_if_it_does_not_exist("filesystem/programs/");
+
         file := file_open(tprint("filesystem/programs/%", name), true);
         file_write(*file, *header, size_of(Formosa_Exe_Header));
         file_write(*file, type_info_pointer_table.data, type_info_pointer_table.count * 8);

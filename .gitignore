@@ -69,3 +69,6 @@ userspace/example.jai
 
 filesystem/system/keyboard_layouts/ansi_us_qwerty.xml
 filesystem/fun_things
+
+filesystem/image_test.jpg
+filesystem/OpenSans-BoldItalic.ttf
