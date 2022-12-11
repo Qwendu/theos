@@ -142,7 +142,6 @@ start:
 
   .greeting: db 'Hello, sailor', 0xa, 0xd, 0
 
-  .vesa_fail_message: db '  No appropriate VESA mode was found, or VESA is not supported.', 0xa, 0xd, 0
   .boot_drive: db 0
   .space: db ' ', 0
 

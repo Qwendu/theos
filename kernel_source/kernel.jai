@@ -298,6 +298,18 @@ crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
     return 0;
 }
 
+#program_export
+plt_entry_must_be_patched :: () #c_call {
+    kernel_context: Context;
+    kernel_context.allocator.proc = allocate_memory;
+    kernel_context.logger = log;
+    kernel_context.assertion_failed = assertion_failed;
+
+    push_context kernel_context {
+        print("You must patch another PLT table entry! But I don't know how to help you figure out which one :(\n");
+    }
+}
+
 assert :: (condition: bool, message: string = "", call_site := #caller_location) {
     if !condition {
         assertion_failed(call_site, message);
@@ -1803,32 +1815,34 @@ start_process_minimal :: (header: *void) {
 }
 
 Syscall_Numbers :: enum {
-    NONE             :: 0x00;
-    MAP_MEMORY       :: 0x01;
-    UNMAP_MEMORY     :: 0x02;
-    WRITE_STRING     :: 0x03;
-    READ_FILE        :: 0x04;
-    WRITE_FILE       :: 0x05;
-    CREATE_FILE      :: 0x06;
-    STAT_FILE        :: 0x07;
-    GET_MESSAGE      :: 0x08;
-    CREATE_WINDOW    :: 0x09;
-    CLOSE_WINDOW     :: 0x0a;
-    REPAINT          :: 0x0b;
-    GET_THEME        :: 0x0c;
-    SET_THEME        :: 0x0d;
-    INPUT            :: 0x0e;
-    OUTPUT           :: 0x0f;
-    READ_STRING      :: 0x10;
-    LIST_DIRECTORY   :: 0x11;
-    GET_TIME         :: 0x12;
-    GET_SYSTEM_PARAMETERS :: 0x13;
-    WAIT_FOR_MESSAGE :: 0x14;
-    GET_DEVICE_LIST  :: 0x15;
+    NONE                    :: 0x00;
+    MAP_MEMORY              :: 0x01;
+    UNMAP_MEMORY            :: 0x02;
+    WRITE_STRING            :: 0x03;
+    READ_FILE               :: 0x04;
+    WRITE_FILE              :: 0x05;
+    CREATE_FILE             :: 0x06;
+    STAT_FILE               :: 0x07;
+    GET_MESSAGE             :: 0x08;
+    CREATE_WINDOW           :: 0x09;
+    CLOSE_WINDOW            :: 0x0a;
+    REPAINT                 :: 0x0b;
+    GET_THEME               :: 0x0c;
+    SET_THEME               :: 0x0d;
+    INPUT                   :: 0x0e;
+    OUTPUT                  :: 0x0f;
+    READ_STRING             :: 0x10;
+    LIST_DIRECTORY          :: 0x11;
+    GET_TIME                :: 0x12;
+    GET_SYSTEM_PARAMETERS   :: 0x13;
+    WAIT_FOR_MESSAGE        :: 0x14;
+    GET_DEVICE_LIST         :: 0x15;
     GET_SPACE_NEEDED_FOR_DEVICE_LIST :: 0x16;
-    YIELD            :: 0x17;
-    GET_WINDOW_BUFFER      :: 0x19;
-    GET_MOUSE_POSITION     :: 0x20;
+    YIELD                   :: 0x17;
+    EXIT                    :: 0x18;
+    GET_WINDOW_BUFFER       :: 0x19;
+    GET_MOUSE_POSITION      :: 0x20;
+    GET_WINDOW_SIZE         :: 0x21;
 }
 
 #program_export
@@ -1865,7 +1879,10 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         current_task.the_context = *context;
         defer current_task.the_context = old;
 
-        if data.rax == xx GET_SYSTEM_PARAMETERS {
+        syscall_number := cast(Syscall_Numbers) data.rax;
+
+        if syscall_number == {
+          case GET_SYSTEM_PARAMETERS;
             System_Params :: struct {
                 x_resolution: int;
                 y_resolution: int;
@@ -1880,16 +1897,14 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             sys.y_resolution = graphics.screen.height;
             sys.physical_memory = total_memory;
             sys.used_physical_memory = total_memory - available_memory;
-       }
 
-        else if data.rax == xx WRITE_STRING {
+          case WRITE_STRING;
             text: string;
             text.data = xx data.rbx;
             text.count = xx data.rcx;
             print(text);
-        }
 
-        else if data.rax == xx READ_STRING {
+          case READ_STRING;
             #asm { sti; }
 
             prompt: string;
@@ -1922,9 +1937,8 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 }
             }
             #asm { cli; }
-        }
 
-        else if data.rax == xx OUTPUT {
+          case OUTPUT;
             #import "Deep_Copy";
 
             allocator_data: struct {
@@ -1960,29 +1974,24 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_String));
             }
             context.allocator.proc = allocate_memory;
-        }
 
-        else if data.rax == xx INPUT {
+          case INPUT;
             target := cast(*Any) data.rbx;
             << target = current_task.parent_process.input_data;
-        }
 
-        else if data.rax == xx MAP_MEMORY {
+          case MAP_MEMORY;
             buffer := map_memory(xx data.rcx);
             << cast(**void) data.rbx = buffer;
-        }
 
-        else if data.rax == xx UNMAP_MEMORY {
+          case UNMAP_MEMORY;
             unmap_memory(xx data.rbx, xx data.rcx);
-        }
 
-        else if data.rax == xx GET_MESSAGE {
+          case GET_MESSAGE;
             yield();
             result := cast(*Message) data.rbx;
             << result = get_message();
-        }
 
-        else if data.rax == xx WAIT_FOR_MESSAGE {
+          case WAIT_FOR_MESSAGE;
             result := cast(*Message) data.rbx;
             << result = get_message();
 
@@ -1991,18 +2000,16 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 yield();
                 << result = get_message();
             }
-        }
 
-        else if data.rax == xx CREATE_WINDOW {
+          case CREATE_WINDOW;
             width := cast(int) data.rdi;
             height := cast(int) data.rcx;
             target := cast(*Window_Handle) data.rdx;
 
             << target = create_window(width, height);
             paint_screen();
-        }
 
-        else if data.rax == xx REPAINT {
+          case REPAINT;
             entry := graphics.draw_list;
             while entry {
                 if entry.type == .BLITTER {
@@ -2012,53 +2019,48 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 entry = entry.next;
             }
             paint_screen();
-        }
 
-        else if data.rax == xx CLOSE_WINDOW {
+          case CLOSE_WINDOW;
             close_window(xx data.rbx);
-        }
 
-        else if data.rax == xx GET_WINDOW_BUFFER {
+          case GET_WINDOW_BUFFER;
             w := *windows[data.rbx];
 
             if !w.exists return;
             if w.owner != current_task return;
 
             << cast(**u32) data.rcx = w.blitter.source_surface.buffer;
-        }
 
-        else if data.rax == xx READ_FILE {
+          case READ_FILE;
             name := << cast(*string) data.rcx;
 
             file := read_file(name);
             target := cast(*[] u8) data.rdx;
             << target = file;
-        }
 
-        else if data.rax == xx WRITE_FILE {
+          case WRITE_FILE;
             name:      string = << cast(*string) data.rcx;
             file_data: [] u8  = << cast(*[] u8)  data.rbx;
 
             data.rax = xx write_file(name, file_data);
-        }
 
-        else if data.rax == xx CREATE_FILE {
+          case CREATE_FILE;
             name: string = << cast(*string) data.rbx;
             data.rax = xx create_file(name);
-        }
 
-        else if data.rax == xx LIST_DIRECTORY {
+          case LIST_DIRECTORY;
             name := << cast(*string) data.rbx;
             res: Filesystem_Result;
             << cast(*[] Directory_Entry_Info) data.rcx, res = list_directory(name);
-            data.rax = xx res;
-        }
+            if res == .item_is_wrong_kind {
+                print("List directory called on a file!\n");
+                << cast(*[] Directory_Entry_Info) data.rcx = .[];
+            }
 
-        else if data.rax == xx GET_THEME {
+          case GET_THEME;
             << cast(*Theme) data.rbx = theme;
-        }
 
-        else if data.rax == xx SET_THEME {
+          case SET_THEME;
             old_theme := theme;
             theme = << cast(*Theme) data.rbx;
             shell.background.color = theme.background;
@@ -2073,13 +2075,11 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 }
             }
             shell.text.draw.dirty = true;
-        }
 
-        else if data.rax == xx GET_TIME {
+          case GET_TIME;
             << cast(*Basic.Apollo_Time) data.rbx = get_system_time();
-        }
 
-        else if data.rax == xx GET_DEVICE_LIST {
+          case GET_DEVICE_LIST;
             device_list: [] Hardware_Device;
             device_list.count = pci_device_count;
             device_list.data = xx data.rbx;
@@ -2089,25 +2089,25 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 device_list[it].type = .PCI;
             }
             << cast(*int) data.rcx = pci_device_count;
-        }
 
-        else if data.rax == xx GET_SPACE_NEEDED_FOR_DEVICE_LIST {
+          case GET_SPACE_NEEDED_FOR_DEVICE_LIST;
             << cast(*int) data.rbx = pci_device_count * size_of(Hardware_Device);
-        }
 
-        else if data.rax == xx YIELD {
+          case YIELD;
             yield();
-        }
 
-        else if data.rax == xx GET_MOUSE_POSITION {
-            window := cast(Window_Handle) data.rdx;
+          case EXIT;
+            exit();
 
-            if window != INVALID_WINDOW_HANDLE {
+          case GET_MOUSE_POSITION;
+            w := cast(Window_Handle) data.rdx;
+
+            if w != INVALID_WINDOW_HANDLE {
                 hit := get_window_at(mouse.position_x, mouse.position_y);
 
-                if hit == window && valid_alive_and_owned(window) {
-                    << cast(*int) data.rdi = mouse.position_x - windows[window].blitter.draw.x;
-                    << cast(*int) data.rcx = mouse.position_y - windows[window].blitter.draw.y;
+                if hit == w && valid_alive_and_owned(w) {
+                    << cast(*int) data.rdi = mouse.position_x - windows[w].blitter.draw.x;
+                    << cast(*int) data.rcx = mouse.position_y - windows[w].blitter.draw.y;
                 } else {
                     << cast(*int) data.rdi = -1;
                     << cast(*int) data.rcx = -1;
@@ -2117,9 +2117,19 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 << cast(*int) data.rdi = mouse.position_x;
                 << cast(*int) data.rcx = mouse.position_y;
             }
+
+          case GET_WINDOW_SIZE;
+            w := cast(Window_Handle) data.rdx;
+            if valid_alive_and_owned(w) {
+                << cast(*int) data.rdi = windows[w].blitter.draw.width;
+                << cast(*int) data.rcx = windows[w].blitter.draw.height;
+            }
+
+          case;
+            HexMode();
+            assert(false, Basic.tprint("Not a syscall number: 0x%", data.rax));
         }
 
-        else assert(false, Basic.tprint("Not a syscall number: %", data.rax));
     }
 }
 
@@ -2418,4 +2428,15 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
     }
 
     while true #asm { hlt; }
+}
+
+write_string :: (message: string) #no_context {
+    kernel_context: Context;
+    kernel_context.allocator.proc = allocate_memory;
+    kernel_context.logger = log;
+    kernel_context.assertion_failed = assertion_failed;
+
+    push_context kernel_context {
+        print(message);
+    }
 }

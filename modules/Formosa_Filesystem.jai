@@ -4,6 +4,7 @@
 
 #import "Bit_Array";
 #import "Basic";
+#import "String";
 
 Extent :: struct {
     block_index: int;
@@ -169,12 +170,20 @@ Entry_Loc :: struct {
     directory_index: int;
 }
 
-parse_path :: (path_string: string) -> [..] string {
+parse_path :: (_path_string: string) -> [..] string {
+    path_string := _path_string;
     path: [..] string;
+
+    if starts_with(path_string, "./") {
+        path_string.count -= 2;
+        path_string.data += 2;
+    }
 
     if path_string.count {
         length: int = 1;
         for cast([] u8) path_string {
+            assert(it != #char "\\", "Nah");
+
             if it == #char "/" {
                 new: string;
                 new.data = path_string.data + it_index - length + 1;
@@ -408,10 +417,10 @@ read_file :: (path: string) -> [] u8, Filesystem_Result {
 
 Directory_Entry_Info :: struct {
     name: string;
-    created: Apollo_Time;
-    modified: Apollo_Time;
     type: enum { DIR; FILE; }
     file_size_or_entry_count_if_directory: int;
+    created: Apollo_Time;
+    modified: Apollo_Time;
 }
 
 list_directory :: (path: string) -> [] Directory_Entry_Info, Filesystem_Result {
@@ -426,6 +435,7 @@ list_directory :: (path: string) -> [] Directory_Entry_Info, Filesystem_Result {
     read_block(entry_loc.directory_block, xx block, fs_user_data);
 
     entry := block + entry_loc.directory_index;
+    if !(entry.flags & .DIRECTORY)  return .[], .item_is_wrong_kind;
     if !entry.extents[0].block_count return .[], .success;
 
     directory := cast(*Directory_Entry) alloc(FS_BLOCKSIZE);

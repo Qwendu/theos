@@ -1,4 +1,5 @@
 
+
 // Metaprogram to build a Jai program into the custom executable format that we can load and run
 // See modules/Formosa_Executable_Format.jai
 
@@ -8,58 +9,8 @@ entry_point :: #string END
 
 #program_export
 _formosa_start :: () #no_context {
-    user_context: Context;
-    user_context.allocator.proc = allocate_memory;
-    user_context.logger = my_log;
-    user_context.assertion_failed = assertion_failed;
-
-    push_context user_context {
-    }
-}
-
-my_log :: (message: string, data: *void, info: Log_Info) {
     Formosa :: #import "Formosa";
-    Formosa.write_string(message);
-}
-
-allocate_memory :: (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: *void, user_data: *void) -> *void {
-    Formosa :: #import "Formosa";
-    if mode == .FREE {
-        Formosa.unmap_memory(old_size, xx old_buffer);
-        return null;
-    }
-
-    if mode == .RESIZE && old_size {
-        if size < old_size || size < 4096 {
-            return old_buffer;
-        }
-
-        new := Formosa.map_memory(size);
-        memcpy(new, old_buffer, old_size);
-        return new;
-    }
-
-    return Formosa.map_memory(size);
-}
-
-assertion_failed :: (location: Source_Code_Location, message: string) {
-    Formosa :: #import "Formosa";
-    #import "Formosa_Utilities";
-
-    Formosa.write_string("\nAssertion failure!\n  -> ");
-    Formosa.write_string(location.fully_pathed_filename);
-    Formosa.write_string(":");
-    write_int(location.line_number);
-
-    if message.count {
-        Formosa.write_string("\n     ");
-        Formosa.write_string(message);
-    }
-    Formosa.write_string("\n\n");
-    Formosa.repaint();
-
-    while true {
-        #asm { hlt; }
+    push_context Formosa.make_context() {
     }
 }
 
@@ -86,9 +37,9 @@ build_formosa_app :: (name: string, optimize: bool = false) {
 
         #if !ENABLE_IST options.disable_redzone = true;
 
-        if optimize set_optimization_level(*options, 3, 3);
+        // if optimize set_optimization_level(*options, 3, 3);
 
-        options.stack_trace = false;
+        options.stack_trace = true;
         options.array_bounds_check = .OFF;
         options.cast\_bounds_check = .OFF;
         options.math\_bounds_check = .OFF;
@@ -100,8 +51,8 @@ build_formosa_app :: (name: string, optimize: bool = false) {
         options.text_output_flags = 0;
 
         new_path: [..] string;
-        array_add(*new_path, ..options.import_path);
         array_add(*new_path, "modules/");
+        array_add(*new_path, ..options.import_path);
         options.import_path = new_path;
 
         options.additional_linker_arguments = .["-e", "_formosa_start"];
@@ -109,7 +60,17 @@ build_formosa_app :: (name: string, optimize: bool = false) {
         set_build_options(options, w);
 
         compiler_begin_intercept(w);
+        add_build_string("the_current_process_context: *Context;\n", w);
+
         add_build_file(tprint("userspace/%.jai", name), w);
+
+        context.print_style.default_format_int.base = 16;
+        context.print_style.default_format_int.minimum_digits = 2;
+        for 0..100 {
+            add_build_string(tprint(DEFAULT_PLT_ENTRY_CODE, it - 1), w);
+        }
+        context.print_style.default_format_int.base = 10;
+        context.print_style.default_format_int.minimum_digits = 1;
 
         while true {
             message := compiler_wait_for_message();
@@ -210,12 +171,30 @@ build_formosa_app :: (name: string, optimize: bool = false) {
     write_string("\n=== Patching ELF ===\n");
     {
         patches := Plt_Patch.[
-                .{source = "crt_memset", target = "memset"},
-                .{source = "crt_memcpy", target = "memcpy"},
-                .{source = "crt_memcmp", target = "memcmp"},
+            .{source = "crt_memset",  target = "memset"},
+            .{source = "crt_memcpy",  target = "memcpy"},
+            .{source = "crt_memcmp",  target = "memcmp"},
+            .{source = "crt_memmove", target = "memmove"},
+            .{source = "crt_strcmp",  target = "strcmp"},
+            .{source = "crt_strlen",  target = "strlen"},
+            .{source = "crt_strstr",  target = "strstr"},
+            .{source = "crt_malloc",  target = "malloc"},
+            .{source = "crt_free",    target = "free"},
+            .{source = "crt_realloc", target = "realloc"},
+            .{source = "crt_chdir",   target = "chdir"},
+            .{source = "crt_getenv",  target = "getenv"},
+            .{source = "crt_fopen",   target = "fopen"},
+            .{source = "crt_fread",   target = "fread"},
+            .{source = "crt_fclose",  target = "fclose"},
+            .{source = "crt_fseek",   target = "fseek"},
+            .{source = "crt_clock_gettime", target = "clock_gettime"},
+            .{source = "crt_fmod",    target = "fmod"},
+            .{source = "crt_fmodf",   target = "fmodf"},
         ];
 
-        patch_procedure_linkage_table(cast([] u8) elf, patches);
+        default := "plt_entry_%_must_be_patched";
+
+        patch_procedure_linkage_table(cast([] u8) elf, patches, default);
     }
 
     write_string("\n=== Writing executable ===\n");
@@ -293,7 +272,7 @@ build_formosa_app :: (name: string, optimize: bool = false) {
         header.elf_offset += builder_string_length(*type_table);
         header.elf_offset += 8 - (header.elf_offset % 8);
 
-        file := file_open(tprint("files/%", name), true);
+        file := file_open(tprint("filesystem/programs/%", name), true);
         file_write(*file, *header, size_of(Formosa_Exe_Header));
         file_write(*file, type_info_pointer_table.data, type_info_pointer_table.count * 8);
         file_write(*file, *type_table);

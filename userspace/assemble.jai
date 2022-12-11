@@ -497,9 +497,10 @@ main :: (source_file: string, output_name: string) {
     content.count = file_size;
     content.data = file;
 
-    create_file(output_name);
-    if write_file(output_name, content) != .success {
-        write_string(tprint("Could not write file %\n", output_name));
+    path := tprint("programs/%", output_name);
+    create_file(path);
+    if write_file(path, content) != .success {
+        write_string(tprint("Could not write file %\n", path));
     }
 }
 

@@ -1,0 +1,16 @@
+Welcome.
+
+To see a list of files and folders in the root directory, type
+
+    list_directory ""
+
+You can then also run list_directory with any of the entries marked "dir" as an argument to see
+the files that are stored in subfolders. For example
+
+    list_directory "programs"
+
+will show you a list of programs you can run. Command line arguments are declared in the executable
+header, and are strongly typed, so if you get them wrong, the shell will let you know.
+
+If some info that you still wanted to look at is now starting to be scrolled off the top of the
+screen, you can hold left-control and press the up-arrow to scroll back up.

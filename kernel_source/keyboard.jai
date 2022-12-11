@@ -58,9 +58,12 @@ ps2_interrupt :: () #c_call {
     if key >= 0x80 && key <= 0xe0 {
         event.key = get_key_code(xx (key - 0x80));
         event.type = .RELEASED;
-    } else {
+    } else if key < 0xe0 + 0x80 {
         event.key = get_key_code(xx key);
         event.type = .PRESSED;
+    } else {
+        event.key = get_key_code(xx (key - 0x80));
+        event.type = .RELEASED;
     }
 
     write_event_buffer(*input_key_buffer, event);
@@ -532,6 +535,7 @@ get_key_code :: (key: Ps2_Scan_Code) -> Key_Code #no_context {
     if key == .ESC          return ESCAPE;
     if key == .ENTER        return ENTER;
     if key == .TAB          return TAB;
+    if key == .FLAG         return FLAG;
 
     if (key >= .F1) && (key <= .F10) {
         delta := key - .F1;

@@ -92,7 +92,7 @@ init_shell :: (font: Pnm) {
 
     shell.foreground_task = *the_first_task;
 
-    shell.text         = create_text_viewer(font);
+    shell.text         = create_text_viewer(font, buffer_size = 0x10_0000);
     shell.command_text = create_text_viewer(font);
 
     add_screen_draw_list_entry(*shell.text, 50, 50, "shell output");
@@ -250,6 +250,10 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
 
             else if key_code == .CTRL {
                 shell.ctrl_held = false;
+            }
+
+            else if key_code == .FLAG {
+                shell.flag_held = false;
             }
         }
 
@@ -449,10 +453,10 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
 
     if !parse_success return;
 
-    exe := read_file(name);
+    exe := read_file(Basic.tprint("programs/%", name));
     defer unmap_memory(exe.count, xx exe.data);
     if !exe.count && parse_args.count == 0 {
-        entries := list_directory("");
+        entries := list_directory("programs");
 
         for entries {
             if String.begins_with_nocase(it.name, name) {
@@ -570,7 +574,7 @@ shell_update_command_lists :: () {
 }
 
 shell_load_program :: (step: Command_Step) -> *Task_Info {
-    exe := read_file(step.name);
+    exe := read_file(Basic.tprint("programs/%", step.name));
     defer unmap_memory(exe.count, xx exe.data);
 
     if !exe.count {
@@ -770,7 +774,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
             }
 
             else {
-                generate_parse_error("Expected a parameter, but got `Token.Type.%`\n", tok.type);
+                generate_parse_error("Expected a parameter, but got token type %\n", tok.type);
                 return false, steps, tokens;
             }
 
@@ -786,7 +790,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
             if tok.type == .EOT return true, steps, tokens;
 
             if tok.type != .VERTICAL_BAR {
-                generate_parse_error("Expected a comma or vertical bar, but got `Token.Type.%`\n", tok.type);
+                generate_parse_error("Expected a comma or vertical bar, but got token type %\n", tok.type);
                 return false, steps, tokens;
             }
         }
@@ -964,8 +968,7 @@ print_ipc_data :: (value: Any) {
                         }
                     }
 
-
-                    if !apollo length = Basic.tprint("%", thing).count; // Bit weird bro
+                    if !apollo length = Basic.tprint("%", thing).count;
                     if length > widths[it_index]  widths[it_index] = length;
                     context.print_style.default_format_int.base = 10;
                 }

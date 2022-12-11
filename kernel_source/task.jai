@@ -127,9 +127,10 @@ exit :: () {
         assert(task != current_task);
     }
 
-    stack_top := task.stack_bottom - task.stack_size;
-    unmap_memory(task.stack_size, cast(u64) stack_top);
+    for *windows if it.exists && it.owner == task  close_window(it_index);
 
+    stack_top := task.stack_bottom - task.stack_size;
+    // unmap_memory(task.stack_size, cast(u64) stack_top);
     unmap_memory(task.thread_storage_size, cast(u64) task.thread_storage);
 
     task.state = .RETIRED;
@@ -143,7 +144,7 @@ exit :: () {
 valid_alive_and_owned :: (w: Window_Handle) -> bool {
     if w >= 32 || w < 0 return false;
     if !windows[w].exists return false;
-    if windows[w].owner != current_task return false;
+    if windows[w].owner != current_task && current_task != *the_first_task return false;
 
     return true;
 }

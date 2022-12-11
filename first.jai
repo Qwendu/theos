@@ -59,7 +59,7 @@ interrupt_handlers: [] struct {
     user_args, compiler_args := get_build_options().compile_time_command_line;
 
     make_vdi: bool;
-    vbox: bool;
+    run_vm: bool;
     userspace: bool;
     no_kernel: bool;
     setup_vm: bool;
@@ -70,11 +70,11 @@ interrupt_handlers: [] struct {
             assemble();
             return;
 
-          case "vdi";   make_vdi  = true;
-          case "run_vm";  vbox      = true;
-          case "user";  userspace = true;
+          case "vdi";        make_vdi = true;
+          case "run_vm";     run_vm = true;
+          case "user";       userspace = true;
           case "no_kernel";  no_kernel = true;
-          case "setup_vm";  setup_vm = true;
+          case "setup_vm";   setup_vm = true;
           case "help";
             print("\nSee readme.md.\n\n");
             return;
@@ -84,17 +84,25 @@ interrupt_handlers: [] struct {
         }
     }
 
-    if vbox {
+    if run_vm {
+        if make_vdi || userspace || setup_vm || no_kernel {
+            write_string("WARNING: flags other than \"run_vm\" are being ignored. You should compile and run using sequent commands.\n");
+        }
+
         write_string("\n=== Running VirtualBox ===\n");
         shell("VBoxManage controlvm formosa poweroff");
         shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
         shell("VBoxManage closemedium disk_images/formosa.vdi");
         shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium disk_images/formosa.vdi --device 0 --type hdd");
-        shell("VBoxManage startvm formosa");
+        shell("VBoxManage startvm formosa -E VBOX_GUI_DBG_ENABLED=true");
         return;
     }
 
     if setup_vm {
+        if make_vdi || run_vm || userspace || no_kernel {
+            write_string("WARNING: flags other than \"setup_vm\" are being ignored. You should compile and run using sequent commands.\n");
+        }
+
         write_string("\n=== Creating VM ===\n");
         shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
         shell("VBoxManage closemedium disk_images/formosa.vdi");
@@ -102,7 +110,7 @@ interrupt_handlers: [] struct {
         shell("VBoxManage createvm --name formosa --register");
         shell("VBoxManage storagectl formosa --name AHCI --add sata --controller IntelAhci");
         shell("VBoxManage modifyvm formosa --hpet on");
-        shell("VBoxManage modifyvm formosa --memory 2048");
+        shell("VBoxManage modifyvm formosa --memory 4096");
         shell("VBoxManage modifyvm formosa --vram 128");
         shell("VBoxManage modifyvm formosa --bioslogofadein off");
         shell("VBoxManage modifyvm formosa --bioslogofadeout off");
@@ -122,9 +130,9 @@ interrupt_handlers: [] struct {
 
     version_info: Version_Info;
     compiler_get_version_info(*version_info);
-    if memcmp(*version_info, *Version_Info.{0, 1, 44}, size_of(Version_Info)) != 0 {
+    if memcmp(*version_info, *Version_Info.{0, 1, 47}, size_of(Version_Info)) != 0 {
         using version_info;
-        print("This is the wrong version of the compiler! You need 0.1.044, but have %.%.0%\n", major, minor, micro);
+        print("This is the wrong version of the compiler! You need 0.1.047, but have %.%.0%\n", major, minor, micro);
         print("However there's a good chance it works anyway, so continuing.\n");
     }
 
@@ -243,6 +251,12 @@ interrupt_handlers: [] struct {
             compiler_begin_intercept(w);
             add_build_file("kernel_source/kernel.jai", w);
 
+            context.print_style.default_format_int.minimum_digits = 2;
+            for 1..100 {
+                add_build_string(tprint(DEFAULT_PLT_ENTRY_CODE, it - 1), w);
+            }
+            context.print_style.default_format_int.minimum_digits = 1;
+
             {
                 isr_code: String_Builder;
                 for exceptions {
@@ -303,7 +317,9 @@ interrupt_handlers: [] struct {
                 elf := read_entire_file(".build/kernel_elf");
                 elf_header := cast(*Elf64_Ehdr) elf.data;
 
-                patch_procedure_linkage_table(cast([] u8) elf, patches);
+                default := "plt_entry_%_must_be_patched";
+
+                patch_procedure_linkage_table(cast([] u8) elf, patches, default);
 
                 generated_asm: String_Builder;
                 append(*generated_asm, "\n");
@@ -396,6 +412,7 @@ interrupt_handlers: [] struct {
                 hash := sdbm_hash(source_code.data, source_code.count) ^ library_hash ^ build_program_hash;
                 array_add(*new_hashes, hash);
 
+                // if name != "list_directory" continue filename;
                 for hashes if it == hash {
                     continue filename;
                 }
@@ -449,10 +466,10 @@ interrupt_handlers: [] struct {
         if !success fs_name = "main drive";
         format_filesystem(fs_name);
 
-        visit_files("files", true, fs_user_data, (info: *File_Visit_Info, user_data: *void) {
+        visit_files("filesystem", true, fs_user_data, (info: *File_Visit_Info, user_data: *void) {
             name := info.full_name;
-            name.data += "files/".count;
-            name.count -= "files/".count;
+            name.data += "filesystem/".count;
+            name.count -= "filesystem/".count;
 
             (cast(*Fs_Data) user_data).current_time = info.modification_time;
 
@@ -522,8 +539,8 @@ shell :: (format: string, args: .. Any, print_output := true, dont_quote := fals
     result, stdout, stderr := run_command(.. split(command, " "), capture_and_return_output = true, arg_quoting = ifx dont_quote then .NEVER_QUOTE else Process_Argument_Quoting.QUOTE_IF_NEEDED);
 
     if print_output {
-        print_color("%", stdout, color = FOREGROUND_INTENSITY);
-        print_color("%", stderr, color = FOREGROUND_INTENSITY);
+        print_color("%", stdout, color = .HI_YELLOW);
+        print_color("%", stderr, color = .HI_YELLOW);
     }
 
     return !result.exit_code, result.exit_code, stdout, stderr;
@@ -536,7 +553,7 @@ Plt_Patch :: struct {
     plt_index: int = -1;
 }
 
-patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch) {
+patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, default_target: string = "") {
     elf := elf_file;
     elf_header := cast(*Elf64_Ehdr) elf.data;
 
@@ -545,6 +562,13 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch) {
         base += index    * elf_header.e_shentsize;
         header := cast(*Elf64_Shdr) base;
         return header;
+    }
+
+    default_addresses: [100] u64;
+    default_names: [100] string;
+    context.print_style.default_format_int.base = 16;
+    for *default_names {
+        (<< it) = tprint(default_target, it_index - 1);
     }
 
     for 0..elf_header.e_shnum - 1 {
@@ -557,16 +581,25 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch) {
         entry_count := header.sh_size / header.sh_entsize;
         assert(header.sh_size % header.sh_entsize == 0);
 
-        for * patch: patches {
-            for 0..entry_count - 1 {
-                base := elf.data + header.sh_offset;
-                base += it * header.sh_entsize;
-                symbol := cast(*Elf64_Sym) base;
+        for 0..entry_count - 1 {
+            base := elf.data + header.sh_offset;
+            base += it * header.sh_entsize;
+            symbol := cast(*Elf64_Sym) base;
 
-                name := to_string(table + symbol.st_name);
+            name := to_string(table + symbol.st_name);
+
+            for 0..100-1 {
+                if starts_with(name, default_names[it]) {
+                    default_addresses[it] = xx symbol.st_value;
+                    break;
+                }
+            }
+
+            for * patch: patches {
+                if patch.virtual_address != 0  continue;
+
                 if starts_with(name, patch.source) {
                     patch.virtual_address = xx symbol.st_value;
-                    print("Found patch target % at virtual address %.\n", name, symbol.st_value);
                     break;
                 }
             }
@@ -591,19 +624,18 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch) {
 
         entry_count := header.sh_size / header.sh_entsize;
 
-        for * patch: patches {
-            for 0..entry_count - 1 {
-                base := elf.data + header.sh_offset;
-                base += it * header.sh_entsize;
-                rela := cast(*Elf64_Rela) base;
+        for 0..entry_count - 1 {
+            base := elf.data + header.sh_offset;
+            base += it * header.sh_entsize;
+            rela := cast(*Elf64_Rela) base;
 
-                index := (rela.r_info >> 32);
-                symbol := cast(*Elf64_Sym) (symbol_table + index * symbol_table_section_header.sh_entsize);
-                name := to_string(string_table + symbol.st_name);
+            index := (rela.r_info >> 32);
+            symbol := cast(*Elf64_Sym) (symbol_table + index * symbol_table_section_header.sh_entsize);
+            name := to_string(string_table + symbol.st_name);
 
+            for * patch: patches {
                 if name == patch.target {
                     patch.plt_index = xx it;
-                    print("Found plt entry for patch \"%\" at index %.\n", name, it);
                     break;
                 }
             }
@@ -619,6 +651,21 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch) {
         if name != ".plt" continue;
 
         PLT_ENTRY_SIZE :: 16;
+
+        // assert(header.sh_entsize == PLT_ENTRY_SIZE);
+        plt_entry_count := header.sh_size / PLT_ENTRY_SIZE;
+        print("PLT entry count: %\n", plt_entry_count);
+
+        for 1..plt_entry_count-1 {
+            plt_offset := PLT_ENTRY_SIZE * it;
+            patch_target           := plt_offset + xx header.sh_offset;
+            source_virtual_address := plt_offset + xx header.sh_addr + 5;
+
+            jump := xx default_addresses[it] - source_virtual_address;
+
+            elf.data[patch_target] = 0xe9;
+            << (cast(*s32) (elf.data + patch_target + 1)) = xx jump;
+        }
 
         for patch: patches {
             plt_offset := PLT_ENTRY_SIZE * (patch.plt_index + 1);
@@ -639,6 +686,7 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch) {
             elf.data[patch_target] = 0xe9;
             << (cast(*s32) (elf.data + patch_target + 1)) = xx jump;
         }
+
         break;
     }
 }
@@ -770,3 +818,10 @@ for_expansion :: (messages: *type_of(all_messages), body: Code, flags: For_Flags
 }
 
 //os_run_command :: (args: .. string, working_directory := "", capture_and_return_output := false, print_captured_output := false, timeout_ms := 0) -> (successfully_launched: bool, exit_code: u32 = 0, output_string := "", error_string := "", timeout_reached := false) {
+
+DEFAULT_PLT_ENTRY_CODE :: #string END
+#program_export
+plt_entry_%1_must_be_patched :: () #c_call {
+    write_string("PLT 0x%1! ");
+}
+END;

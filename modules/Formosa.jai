@@ -4,32 +4,34 @@
 #scope_export
 
 Syscall_Numbers :: enum {
-    NONE             :: 0x00;
-    MAP_MEMORY       :: 0x01;
-    UNMAP_MEMORY     :: 0x02;
-    WRITE_STRING     :: 0x03;
-    READ_FILE        :: 0x04;
-    WRITE_FILE       :: 0x05;
-    CREATE_FILE      :: 0x06;
-    STAT_FILE        :: 0x07;
-    GET_MESSAGE      :: 0x08;
-    CREATE_WINDOW    :: 0x09;
-    CLOSE_WINDOW     :: 0x0a;
-    REPAINT          :: 0x0b;
-    GET_THEME        :: 0x0c;
-    SET_THEME        :: 0x0d;
-    INPUT            :: 0x0e;
-    OUTPUT           :: 0x0f;
-    READ_STRING      :: 0x10;
-    LIST_DIRECTORY   :: 0x11;
-    GET_TIME         :: 0x12;
-    GET_SYSTEM_PARAMETERS :: 0x13;
-    WAIT_FOR_MESSAGE :: 0x14;
-    GET_DEVICE_LIST  :: 0x15;
+    NONE                    :: 0x00;
+    MAP_MEMORY              :: 0x01;
+    UNMAP_MEMORY            :: 0x02;
+    WRITE_STRING            :: 0x03;
+    READ_FILE               :: 0x04;
+    WRITE_FILE              :: 0x05;
+    CREATE_FILE             :: 0x06;
+    STAT_FILE               :: 0x07;
+    GET_MESSAGE             :: 0x08;
+    CREATE_WINDOW           :: 0x09;
+    CLOSE_WINDOW            :: 0x0a;
+    REPAINT                 :: 0x0b;
+    GET_THEME               :: 0x0c;
+    SET_THEME               :: 0x0d;
+    INPUT                   :: 0x0e;
+    OUTPUT                  :: 0x0f;
+    READ_STRING             :: 0x10;
+    LIST_DIRECTORY          :: 0x11;
+    GET_TIME                :: 0x12;
+    GET_SYSTEM_PARAMETERS   :: 0x13;
+    WAIT_FOR_MESSAGE        :: 0x14;
+    GET_DEVICE_LIST         :: 0x15;
     GET_SPACE_NEEDED_FOR_DEVICE_LIST :: 0x16;
-    YIELD :: 0x17;
-    GET_WINDOW_BUFFER :: 0x19;
-    GET_MOUSE_POSITION :: 0x20;
+    YIELD                   :: 0x17;
+    EXIT                    :: 0x18;
+    GET_WINDOW_BUFFER       :: 0x19;
+    GET_MOUSE_POSITION      :: 0x20;
+    GET_WINDOW_SIZE         :: 0x21;
 }
 
 System_Params :: struct {
@@ -51,7 +53,7 @@ get_system_parameters :: (params: *System_Params) {
     }
 }
 
-formosa_get_time :: () -> Apollo {
+formosa_get_time :: () -> Apollo #no_context {
     using Syscall_Numbers;
 
     time: Apollo;
@@ -101,6 +103,15 @@ yield :: () {
 
     #asm {
         mov rax: gpr === a, YIELD;
+        int 0x80;
+    }
+}
+
+exit :: () {
+    using Syscall_Numbers;
+
+    #asm {
+        mov rax: gpr === a, EXIT;
         int 0x80;
     }
 }
@@ -190,22 +201,23 @@ create_file :: (name: string) -> Filesystem_Result {
     return /* result */ .success;
 }
 
-list_directory :: (name: string) -> [] Directory_Entry_Info {
+list_directory :: (name: string) -> [] Directory_Entry_Info, Filesystem_Result {
     using Syscall_Numbers;
+    result: Filesystem_Result;
 
-    result: [] Directory_Entry_Info;
+    info: [] Directory_Entry_Info;
     _name := *name;
-    _result := *result;
+    _info := *info;
 
     #asm {
         mov rbx: gpr === b, _name;
-        mov rcx: gpr === c, _result;
+        mov rcx: gpr === c, _info;
         mov rax: gpr === a, LIST_DIRECTORY;
 
         int 0x80;
     }
 
-    return result;
+    return info, /* result */ .success;
 }
 
 
@@ -263,7 +275,7 @@ repaint :: () {
     }
 }
 
-write_string :: (text: string) {
+write_string :: (text: string) #no_context {
     using Syscall_Numbers;
 
     count := text.count;
@@ -301,7 +313,7 @@ read_string :: (prompt: string) -> string {
     return result;
 }
 
-map_memory :: (size: int) -> *void {
+map_memory :: (size: int) -> *void #no_context {
     using Syscall_Numbers;
 
     buffer: *void;
@@ -390,18 +402,37 @@ wait_for_message :: () -> Message {
 //     return result;
 // }
 
-get_mouse_position :: (in_window := INVALID_WINDOW_HANDLE) -> int, int {
+get_mouse_position :: (window := INVALID_WINDOW_HANDLE) -> int, int {
     using Syscall_Numbers;
 
     x, y: int;
     px, py := *x, *y;
-    w := in_window;
+    w := window;
 
     #asm {
         mov rdi: gpr === di, px;
         mov rcx: gpr === c, py;
         mov rdx: gpr === d, w;
         mov rax: gpr === a, GET_MOUSE_POSITION;
+
+        int 0x80;
+    }
+
+    return x, y;
+}
+
+get_window_size :: (window: Window_Handle) -> int, int {
+    using Syscall_Numbers;
+
+    x, y: int;
+    px, py := *x, *y;
+    w := window;
+
+    #asm {
+        mov rdi: gpr === di, px;
+        mov rcx: gpr === c, py;
+        mov rdx: gpr === d, w;
+        mov rax: gpr === a, GET_WINDOW_SIZE;
 
         int 0x80;
     }
@@ -479,10 +510,11 @@ File_Information :: struct {
 Directory_Entry_Info :: struct {
     name: string;
 
-    created: Apollo; @Formosa.apollo
-    modified: Apollo; @Formosa.apollo
     type: enum int { dir; file; }
     size: int; @Formosa.base16
+
+    created: Apollo; @Formosa.apollo
+    modified: Apollo; @Formosa.apollo
 }
 
 Rich_Text :: struct {
@@ -608,6 +640,102 @@ Key_Code :: enum u32 {
     KEY_CODE_COUNT;
 }
 
+make_context :: () -> Context #no_context {
+    user_context: Context;
+    user_context.allocator.proc = allocate_memory;
+    user_context.logger = my_log;
+    user_context.assertion_failed = assertion_failed;
+
+    return user_context;
+}
+
+
+
+#scope_file
+
+
+
+my_log :: (message: string, data: *void, info: Log_Info) {
+    write_string(message);
+}
+
+allocate_memory :: (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: *void, user_data: *void) -> *void {
+    if mode == .FREE {
+        unmap_memory(old_size, xx old_buffer);
+        return null;
+    }
+
+    if mode == .RESIZE && old_size {
+        if size < old_size || size < 4096 {
+            return old_buffer;
+        }
+
+        new := map_memory(size);
+        memcpy(new, old_buffer, old_size);
+        return new;
+    }
+
+    return map_memory(size);
+}
+
+assertion_failed :: (location: Source_Code_Location, message: string) {
+
+    write_int :: (number: int) {
+        negative: bool;
+        buffer: [] u8;
+        buffer.count = 30;
+        buffer.data = map_memory(30);
+
+        _number := number;
+        if number < 0 _number *= -1;
+
+        for 0..buffer.count - 1 {
+            rem := _number % 10;
+            buffer[29 - it] =  #char "0" + cast(u8) rem;
+            _number /= 10;
+
+            if _number == 0 {
+                result: string = ---;
+                result.data = buffer.data + 29 - it;
+                result.count = it + 1;
+                write_string(result);
+                return;
+            }
+        }
+    }
+
+    write_string("\nAssertion failure!\n  -> ");
+    write_string(location.fully_pathed_filename);
+    write_string(":");
+    write_int(location.line_number);
+
+    if message.count {
+        write_string("\n     ");
+        write_string(message);
+    }
+    write_string("\n\n");
+    repaint();
+
+    write_string("\nStack trace:\n");
+    node := context.stack_trace;
+    while node {
+        if node.info != null {
+            write_string("In file \"");
+            write_string(node.info.location.fully_pathed_filename);
+            write_string("\" -> in proc \"");
+            write_string(node.info.name);
+            write_string("\" on line ");
+            write_int(node.line_number);
+            write_string("\n");
+        }
+
+        repaint();
+        node = node.next;
+    }
+    repaint();
+    exit();
+}
+
 #scope_module
 
 #program_export
@@ -646,4 +774,156 @@ crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
         }
     }
     return 0;
+}
+
+#program_export
+crt_chdir :: (path: *u8) -> s32 #c_call {
+    return 0;
+}
+
+#program_export
+crt_malloc :: (size: u64) -> *void #c_call {
+    return map_memory(xx size);
+}
+
+#program_export
+crt_free :: (ptr: *void) #c_call {
+    return;
+}
+
+#program_export
+crt_realloc :: (ptr: *void, size: u64) -> *void #c_call {
+    new_buffer := map_memory(xx size);
+    memcpy(new_buffer, ptr, xx size);
+    return new_buffer;
+}
+
+#program_export
+crt_strcmp :: (s1: *u8, s2: *u8) -> s32 #c_call {
+    n: int;
+    while s1[n] && (s1[n] == s2[n])  n += 1;
+    return cast(s32) s1[n] - cast(s32) s2[n];
+}
+
+#program_export
+crt_strlen :: (s: *u8) -> u64 #c_call {
+    n: u64;
+    while s[n]  n += 1;
+    return n;
+}
+
+#program_export
+crt_strstr :: (haystack: *u8, needle: *u8) -> *u8 #c_call {
+    n: u64;
+    while << haystack {
+        if crt_strcmp(haystack, needle) == 0  return haystack;
+        haystack += 1;
+    }
+    return null;
+}
+
+#program_export
+crt_memmove :: (dest: *u8, src: *u8, n: u64) -> *void #c_call {
+    if !dest || !src return dest;
+
+    if src < dest && src + n > dest {
+        for < xx n-1..0  dest[it] = src[it];
+    } else {
+        for 0..xx n-1  dest[it] = src[it];
+    }
+
+    return dest;
+}
+
+#program_export
+crt_getenv :: (name: *u8) -> *u8 #c_call {
+    variable_name: string;
+    variable_name.data = name;
+    while name[variable_name.count] != 0 variable_name.count += 1;
+
+    // The sophisticated way in which environment variables work in this operating system
+    if variable_name == "FREETYPE_PROPERTIES"  return "freetype\0".data;
+    else {
+        write_string("Environment variable accessed: ");
+        write_string(variable_name);
+        write_string("\n");
+    }
+    return "\0".data;
+}
+
+FILE :: struct {
+    path: string;
+    cursor: int;
+}
+
+#program_export
+crt_fopen :: (pathname: *u8, mode: *u8) -> *FILE #c_call {
+    file := cast(*FILE) map_memory(size_of(FILE));
+    file.path.count = xx crt_strlen(pathname);
+    file.path.data = map_memory(file.path.count);
+    memcpy(file.path.data, pathname, file.path.count);
+
+    file.cursor = 0;
+
+    return file;
+}
+
+#program_export
+crt_fread :: (ptr: *void, size: u64, nmemb: u64, stream: *FILE) -> u64 #c_call {
+    push_context make_context() {
+        bytes := nmemb * size;
+        data, result := read_file(stream.path);
+        if result != .success return 0;
+
+        memcpy(ptr, data.data + stream.cursor, xx bytes);
+        unmap_memory(data.count, data.data);
+        stream.cursor += xx bytes;
+        return bytes;
+    }
+}
+
+#program_export
+crt_fclose :: (stream: *FILE) -> s32 #c_call {
+    push_context make_context() {
+        unmap_memory(stream.path.count, stream.path.data);
+        unmap_memory(size_of(FILE), stream);
+    }
+    return 0;
+}
+
+SEEK_SET :: 0;
+SEEK_CUR :: 1;
+SEEK_END :: 2;
+
+#program_export
+crt_fseek :: (stream: *FILE, offset: s64, whence: s32) -> s32 #c_call {
+    if whence == SEEK_SET  stream.cursor = offset;
+    if whence == SEEK_CUR  stream.cursor += offset;
+    if whence == SEEK_END  write_string("Fseek end\n");
+    return 0;
+}
+
+#program_export
+crt_clock_gettime :: (clockid_t: s32, out_ts: *void) -> s32 #c_call {
+//    Sadness :: #import "Basic";
+//    #import "POSIX";
+//
+//    push_context make_context() {
+//        time := formosa_get_time();
+//        ts, success := Sadness.to_timespec(<< cast(*Sadness.Apollo_Time) *time);
+//        if !success  return -1;
+//        << cast(*timespec) out_ts = ts;
+//    }
+
+    return 0;
+}
+
+#program_export
+crt_fmod :: (x: float64, y: float64) -> float64 #c_call {
+    return x - cast(float64) cast(int) (x / y) * y;
+}
+
+#program_export
+crt_fmodf :: (x: float, y: float) -> float #c_call {
+    return x - cast(float) cast(int) (x / y) * y;
 }
