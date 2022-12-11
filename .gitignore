@@ -3,7 +3,6 @@
 /bochs state/*
 formosa
 modules/Basic/
-modules/File/
 modules/Input/
 modules/.build/*
 modules/Simp/
