@@ -319,6 +319,12 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             write_to_text_viewer(*shell.command_text, shell.history[shell.history_index]);
             update_syntax_highlighting();
             need_repaint = true;
+
+            if shell.text.scroll_position != 0 {
+                shell.text.scroll_position = 0;
+                shell.text.draw.dirty = true;
+                shell.command_text.draw.dirty = true;
+            }
         }
 
         else if !shell.ctrl_held && key_code == .ARROW_DOWN {
@@ -336,6 +342,12 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
                 update_syntax_highlighting();
             }
             need_repaint = true;
+
+            if shell.text.scroll_position != 0 {
+                shell.text.scroll_position = 0;
+                shell.text.draw.dirty = true;
+                shell.command_text.draw.dirty = true;
+            }
         }
 
         else if key_code == .BACKSPACE {
@@ -389,21 +401,28 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             update_syntax_highlighting();
             shell.history_index = shell.history.count;
             need_repaint = true;
-       }
+        }
 
         else if key_code == .ARROW_UP {
             shell.text.scroll_position -= 5;
+            min := -text_viewer_get_rows(*shell.text) + text_viewer_how_many_rows_fit_on_these_pixels(*shell.text, shell.text.draw.height);
+            if shell.text.scroll_position < min {
+                shell.text.scroll_position = min;
+            }
             shell.text.draw.dirty = true;
             shell.command_text.draw.dirty = true;
             need_repaint = true;
-      }
+        }
 
         else if key_code == .ARROW_DOWN {
             shell.text.scroll_position += 5;
+            if shell.text.scroll_position > 0 {
+                shell.text.scroll_position = 0;
+            }
             shell.text.draw.dirty = true;
             shell.command_text.draw.dirty = true;
             need_repaint = true;
-       }
+        }
 
         else if key_code == .ESCAPE {};
 

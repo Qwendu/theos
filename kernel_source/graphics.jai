@@ -495,7 +495,7 @@ text_viewer_backspace :: (text: *Text_Viewer) {
     text.draw.dirty = true;
 }
 
-text_viewer_get_rows :: (text: Text_Viewer) -> int {
+text_viewer_get_rows :: (text: *Text_Viewer) -> int {
     rows: int;
     for 0..text.used-1 {
         if text.buffer[it] == #char "\n" {

@@ -250,6 +250,7 @@ human_move :: () -> bool {
             if message.keyboard.key == .ESCAPE {
                 return false;
             }
+            if message.keyboard.type == .RELEASED continue;
             need_repaint = true;
 
             old_square := selected_square;

@@ -174,23 +174,7 @@ interrupt_handlers: [] struct {
 
             write_entire_file(".build/interrupt.asm", builder_to_string(*builder));
 
-            noptions: Nasm_Options;
-            noptions.outfile = ".build/interrupt.so";
-            noptions.format = .ELF64;
-            noptions.input_file_name = ".build/interrupt.asm";
-            noptions.warnings |= .ALL;
-
-            result, stdout, stderr := run_nasm(noptions);
-
-            write_string(stdout);
-
-            if result.exit_code {
-                write_string("\nAssembly error:\n");
-                write_string(stderr);
-                return;
-            } else {
-                write_string("Assembly success!\n");
-            }
+            shell("nasm .build/interrupt.asm -o .build/interrupt.so -f elf64 -wall");
         }
 
         BOOTLOADER_SECTOR_COUNT :: 5;
@@ -412,10 +396,10 @@ interrupt_handlers: [] struct {
                 hash := sdbm_hash(source_code.data, source_code.count) ^ library_hash ^ build_program_hash;
                 array_add(*new_hashes, hash);
 
-                // if name != "list_directory" continue filename;
-                for hashes if it == hash {
-                    continue filename;
-                }
+                if name != "example" continue filename;
+                // for hashes if it == hash {
+                //     continue filename;
+                // }
                 context.logger = (message: string, *void, Log_Info) {};
                 build_formosa_app(name);
             }
@@ -436,7 +420,7 @@ interrupt_handlers: [] struct {
         kernel := file_open(".build/kernel.bin");
         file_read(kernel, disk_image + cursor, file_length(kernel));
         cursor += file_length(kernel);
-        print("Kernel size, bytes: %\n", file_length(kernel));
+        print("Kernel size, bytes: 0x%\n", formatInt(file_length(kernel), base=16));
 
         Fs_Data :: struct {
             disk_image: *void;
@@ -496,37 +480,16 @@ interrupt_handlers: [] struct {
 }
 
 assemble :: () -> bool {
-    options: Nasm_Options;
-    options.outfile = ".build/boot_loader.bin";
-    options.format = .BIN;
-    options.input_file_name = "boot.asm";
-    options.warnings |= .ALL;
-
-    array_add(*options.include, ".build/");
-    result, stdout, stderr := run_nasm(options);
-
-    if result.type == .FAILED_TO_LAUNCH {
-        write_string("nasm failed to run!\n");
-        return false;
-    }
-
-    write_string(stdout);
-
-    if result.exit_code {
-        write_string("\nAssembly error:\n");
-        write_string(stderr);
-        return false;
-    } else {
-        write_string("Assembly success!\n");
-    }
+    shell("nasm boot.asm -o .build/boot_loader.bin -I .build/ -f bin -wall");
 
     {
         od_command := "od -t x1z -A x -v .build/boot_loader.bin";
         success, error_code, stdout, stderr := shell(od_command, print_output = false);
         if !success || error_code != 0 {
             write_string("od failed to run! (continuing) \n");
+        } else {
+            write_entire_file(".build/boot_loader.hex.txt", stdout);
         }
-        else write_entire_file(".build/boot_loader.hex.txt", stdout);
     }
 
     return true;
@@ -535,12 +498,12 @@ assemble :: () -> bool {
 
 shell :: (format: string, args: .. Any, print_output := true, dont_quote := false) -> bool, int, string, string {
     command := tprint(format, .. args);
-    print("|shell| \"%\"\n", command);
+    print("|shell| \u001b[36;1m\"%\"\u001b[0m\n", command);
     result, stdout, stderr := run_command(.. split(command, " "), capture_and_return_output = true, arg_quoting = ifx dont_quote then .NEVER_QUOTE else Process_Argument_Quoting.QUOTE_IF_NEEDED);
 
-    if print_output {
-        print_color("%", stdout, color = .HI_YELLOW);
-        print_color("%", stderr, color = .HI_YELLOW);
+    if print_output && stdout.count || stderr.count {
+        print("\u001b[33;1m%", stdout);
+        print("%\u001b[0m", stderr);
     }
 
     return !result.exit_code, result.exit_code, stdout, stderr;

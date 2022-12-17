@@ -32,6 +32,10 @@ Formosa_Exe_Type :: enum {
     ELF :: 0;
 }
 
+Formosa_Exe_Flags :: enum_flags {
+    RING_0 :: 0x1;
+}
+
 MINIMAL_EXE_MAGIC :: #run << cast(*u64) "MINIMAL\0".data;
 
 Minimal_Exe_Header :: struct {

@@ -414,13 +414,13 @@ enable_simd :: () {
         set_cr4 cr4;
     }
 
-    if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
-        index: gpr === c;
-        
-        xgetbv xcr0_h:, xcr0_l:, index;
-        or xcr0_l, 7;
-        xsetbv xcr0_h, xcr0_l, index;
-    }
+    // if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
+    //     index: gpr === c;
+    //     
+    //     xgetbv xcr0_h:, xcr0_l:, index;
+    //     or xcr0_l, 7;
+    //     xsetbv xcr0_h, xcr0_l, index;
+    // }
 }
 
 BochsBreak :: () #expand {
@@ -975,27 +975,6 @@ timer_ticks_elapsed: u64;
 timer_ticks_target: u64;
 
 CMOS_BASE_FREQ :: 32768;
-
-// Use get_system_time instead of these
-// =================================================
-// time_difference :: (ticks_a: u64, ticks_b: u64) -> float {
-//     frequency := (CMOS_BASE_FREQ >> (cmos_format.rate - 1));
-//     return cast(float) (ticks_b - ticks_a) / cast(float) frequency;
-// }
-// 
-// wait_for_seconds :: (seconds: float) {
-//     timer_ticks_target = cast(u64) (seconds * (CMOS_BASE_FREQ >> (cmos_format.rate - 1)));
-//     timer_ticks_target += timer_ticks_elapsed;
-// 
-//     while true {
-//         #asm { sti; hlt; }
-//         if timer_ticks_elapsed >= timer_ticks_target {
-//             break;
-//         }
-//     }
-// 
-//     timer_ticks_target = 0;
-// }
 
 
 
