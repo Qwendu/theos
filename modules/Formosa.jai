@@ -640,6 +640,27 @@ Key_Code :: enum u32 {
     KEY_CODE_COUNT;
 }
 
+key_code_to_ascii :: (key: Key_Code, shift: bool = false) -> u8 {
+    if key < 31 || key > 126 return 0;
+
+    if key >= #char "A" && key <= #char "Z" {
+        if shift return xx key;
+        else return xx key + cast(u8) (#char "a" - #char "A");
+    }
+
+    if !shift return xx key;
+    if key >= #char "#" && key <= #char "=" {
+        return "~\0\0\0@\0\0\0\0<_>?)!\"£$%^&*(\0:\0+"[key - #char "#"];
+    }
+
+    if key == #char "[" return #char "{";
+    if key == #char "\\" return #char "|";
+    if key == #char "]" return #char "}";
+    // if key == #char "`" return #char "¬";
+
+    return 0;
+}
+
 make_context :: () -> Context #no_context {
     user_context: Context;
     user_context.allocator.proc = allocate_memory;

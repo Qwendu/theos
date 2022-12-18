@@ -76,7 +76,7 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
     task.stack_bottom = map_memory(stack_size) + stack_size;
     task.stack_size   = stack_size;
 
-    stack := cast(*Interrupt_Stack_Frame) task.stack_bottom - 1;
+    stack := cast(*Interrupt_Data) task.stack_bottom - 1;
     stack.ip = cast(u64) cast(*void) new_task_start;
     stack.flags = 0x200;
     stack.cs = 0x08;
@@ -136,6 +136,11 @@ exit :: () {
     task.state = .RETIRED;
     if shell.foreground_task == task  shell.foreground_task = *the_first_task;
     yield();
+}
+
+#program_export
+pit_interrupt :: (data: *Interrupt_Data) #c_call {
+    defer pic_end_of_interrupt(.PIT);
 }
 
 

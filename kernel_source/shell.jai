@@ -526,22 +526,23 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
     }
 
     if last_arg.type == .STRING {
-        for 0..filesystem_cache.master.root.directory_entry_count - 1 {
-            dir_entry := *filesystem_cache.root.entries[it];
-
-            other_name: string;
-            other_name.data = dir_entry.name.data;
-            other_name.count = c_style_strlen(dir_entry.name.data);
-
-            if String.begins_with_nocase(other_name, last_arg._string) {
-                shell.command_text.used = last_arg.token_or_null.start + 2;
-                write_to_text_viewer(*shell.command_text, "\"");
-                write_to_text_viewer(*shell.command_text, other_name);
-                write_to_text_viewer(*shell.command_text, "\"");
-                update_syntax_highlighting();
-                break;
-            }
-        }
+//        assert(false);
+//        for 0..filesystem_cache.master.root.directory_entry_count - 1 {
+//            dir_entry := *filesystem_cache.root.entries[it];
+//
+//            other_name: string;
+//            other_name.data = dir_entry.name.data;
+//            other_name.count = c_style_strlen(dir_entry.name.data);
+//
+//            if String.begins_with_nocase(other_name, last_arg._string) {
+//                shell.command_text.used = last_arg.token_or_null.start + 2;
+//                write_to_text_viewer(*shell.command_text, "\"");
+//                write_to_text_viewer(*shell.command_text, other_name);
+//                write_to_text_viewer(*shell.command_text, "\"");
+//                update_syntax_highlighting();
+//                break;
+//            }
+//        }
         return;
     }
 

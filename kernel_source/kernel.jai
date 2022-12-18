@@ -102,8 +102,7 @@ kernel_entry :: () {
         // cmos_enable_irq(true);
         // cmos_set_rate(15);
 
-        enable_simd();
-
+        fpu_init();
         acpi_init();
         hpet_init();
 
@@ -117,7 +116,7 @@ kernel_entry :: () {
             boot_drive = it;
         }
 
-        assert(boot_drive != null, "Could not find a bootable (IDE) drive");
+        assert(!!boot_drive, "Could not find the boot disk");
 
         read_block = (block_index: int, block: *Disk_Block, *void) {
             location := FS_BASE_ADDRESS + block_index * FS_BLOCKSIZE;
@@ -380,6 +379,40 @@ io_delay :: () #no_context {
 
 divru :: (dividend: $T, $$ divisor: T) -> T {
     return (dividend + (divisor - 1)) / divisor;
+}
+
+Mxcsr :: enum_flags u32 {
+    IE__invalid_operation_flag;
+    DE__denormal_flag;
+    ZE__divide_by_zero_flag;
+    OE__overflow_flag;
+    UE__underflow_flag;
+    PE__precision_flag;
+    DAZ__denormals_are_zeros;
+    IM__invalid_operation_mask;
+    DM__denormal_operation_mask;
+    ZM__divide_by_zero_mask;
+    OM__overflow_mask;
+    UM__underflow_mask;
+    PM__precision_mask;
+    RC__rounding_control0;
+    RC__rounding_control1;
+    FTZ__flush_to_zero;
+}
+
+fpu_init :: () {
+    mxcsr: Mxcsr;
+    pmxcsr := *mxcsr;
+
+    ftz :: Mxcsr.FTZ__flush_to_zero;
+
+    #asm {
+//        stmxcsr [pmxcsr];
+//        or [pmxcsr], ftz;
+//        ldmxcsr [pmxcsr];
+    }
+
+    enable_simd();
 }
 
 enable_simd :: () {
@@ -704,11 +737,6 @@ Pic_Request_Line :: enum {
     SECONDARY_ATA   :: 0xf;
 }
 
-#program_export
-pit_interrupt :: () #c_call {
-
-}
-
 
 
 cmos_format: struct {
@@ -976,6 +1004,18 @@ timer_ticks_target: u64;
 
 CMOS_BASE_FREQ :: 32768;
 
+
+
+Pit_IO :: enum {
+    channel_0 :: 0x40;
+    channel_1 :: 0x41;
+    channel_2 :: 0x42;
+    command   :: 0x43;
+}
+
+pit_init :: () {
+//    cmd := 0b00_00_
+}
 
 
 acpi: struct {

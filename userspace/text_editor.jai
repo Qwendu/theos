@@ -130,29 +130,26 @@ main :: (filename: string) {
                 all = true;
             }
 
-            else if code < scan_table.count {
-                if !control {
-                    char := ifx shifted scan_table_shifted[code] else scan_table[code];
-                    if char == 0 continue;
+            else if !control {
+                char := key_code_to_ascii(code, shifted);
+                if char == 0 continue;
 
-                    for < used..cursor_pos {
-                        buffer[it] = buffer[it - 1];
-                    }
-
-                    buffer[cursor_pos] = char;
-                    used += 1;
-                    cursor_pos += 1;
-                    repaint_needed = true;
+                for < used..cursor_pos {
+                    buffer[it] = buffer[it - 1];
                 }
 
-                else {
-                    if code == #char "S" && filename.count {
-                        contents: [] u8;
-                        contents.data = buffer;
-                        contents.count = used;
-                        create_file(filename);
-                        write_file(filename, contents);
-                    }
+                buffer[cursor_pos] = char;
+                used += 1;
+                cursor_pos += 1;
+                repaint_needed = true;
+            } else {
+                if code == #char "S" && filename.count {
+                    contents: [] u8;
+                    contents.data = buffer;
+                    contents.count = used;
+                    create_file(filename);
+                    write_file(filename, contents);
+                    write_string("Saving file!\n");
                 }
             }
         }

@@ -1,49 +1,64 @@
 
-
 #scope_module
 
 #import "Bit_Array";
 #import "Basic";
 #import "String";
 
+Constants :: struct {
+    info_node_size :: size_of(Info_Node);
+    block_size :: FS_BLOCKSIZE;
+    info_nodes_per_block :: FS_BLOCKSIZE / info_node_size;
+    directory_entry_size :: size_of(Directory_Entry);
+    directory_entries_per_block :: FS_BLOCKSIZE / directory_entry_size;
+}
+
 Extent :: struct {
     block_index: int;
     block_count: int;
 }
 
-Directory_Entry :: struct {
-    name: [32] u8;
+Info_Node :: struct {
     file_size: int;
+
     flags: enum_flags u8 {
-        LONG_NAME;
         DIRECTORY;
         SYSTEM;
+        READ_ONLY;
     }
     extents: [4] Extent;
 
     modified: Apollo_Time;
     created: Apollo_Time;
+    accessed: Apollo_Time;
     clock_generation: int;
-
-#place name;
-    name_extent: Extent;
 
 #place file_size;
     directory_entry_count: int;
 }
 
-// #assert(size_of(Directory_Entry) == 144);
+Directory_Entry :: struct {
+    name: [32] u8;
+
+    loc: Info_Node_Loc;
+#place name;
+    name_extent: Extent;
+}
 
 Master_Block :: struct {
-    using info: struct {
-        root: Directory_Entry;
+    using content: struct {
+        root: Info_Node;
+
+        info_node_count: int;
 
         magic: u64;
         version: int;
         clock_generation: int;
     }
-    padding: [FS_BLOCKSIZE - size_of(type_of(info))] u8;
+    padding: [FS_BLOCKSIZE - size_of(type_of(content))] u8;
 }
+
+#assert size_of(Master_Block) == FS_BLOCKSIZE;
 
 Bitmap_Block :: struct {
     ENTRY_COUNT :: FS_BLOCKSIZE / size_of(s64);
@@ -52,7 +67,7 @@ Bitmap_Block :: struct {
 
 Directory_Block :: struct {
     ENTRY_COUNT :: FS_BLOCKSIZE / size_of(Directory_Entry);
-    entries: [ENTRY_COUNT] Directory_Entry;
+    entries: [ENTRY_COUNT] Info_Node;
 }
 
 scratch_space: [FS_BLOCKSIZE] u8 #align FS_BLOCKSIZE;
@@ -165,9 +180,9 @@ using filesystem_cache;
 
 #scope_export
 
-Entry_Loc :: struct {
-    directory_block: int;
-    directory_index: int;
+Info_Node_Loc :: struct {
+    block: int;
+    index: int;
 }
 
 parse_path :: (_path_string: string) -> [..] string {
@@ -203,10 +218,10 @@ parse_path :: (_path_string: string) -> [..] string {
     return path;
 }
 
-find_entry :: (path: [] string) -> Entry_Loc, bool {
-    loc: Entry_Loc = .{
-        directory_block = 0,
-        directory_index = 0,
+find_info_node :: (path: [] string) -> Info_Node_Loc, bool {
+    loc: Info_Node_Loc = .{ // Start by pointing to the info node of the root directory
+        block = 0,
+        index = 0,
     };
 
     block_storage := alloc(FS_BLOCKSIZE);
@@ -217,39 +232,42 @@ find_entry :: (path: [] string) -> Entry_Loc, bool {
 
     for step: path {
         assert(step.count < 32);
+        // Read the directory blocks of the current info node and iterate them to find the next directory info node
+        read_block(loc.block, current_entry_storage, fs_user_data);
+        current_info_node := cast(*Info_Node) current_entry_storage + loc.index;
 
-        read_block(loc.directory_block, current_entry_storage, fs_user_data);
-        current_entry := cast(*Directory_Entry) current_entry_storage + loc.directory_index;
-
+        // If we are not at the end of the path and the current info node is not for a directory, fail
         if it_index != path.count - 1 {
-            if ~current_entry.flags & .DIRECTORY return loc, false;
+            if ~current_info_node.flags & .DIRECTORY return loc, false;
         }
 
-        assert(current_entry.extents[0].block_count > 0);
+        // If there are no entries in the current directory info node, fail
+        assert(current_info_node.extents[0].block_count > 0);
 
-        block_index := current_entry.extents[0].block_index;
+        // Read the first directory block of the current info node
+        block_index := current_info_node.extents[0].block_index;
         read_block(block_index, block_storage, fs_user_data);
 
         entries := cast(*Directory_Entry) block_storage;
-        for 0..current_entry.directory_entry_count - 1 {
+        for 0..current_info_node.directory_entry_count - 1 {
             entry := entries[it];
 
             if step.count == c_style_strlen(entry.name.data) {
-                if !memcmp(step.data, entry.name.data, step.count) {
-                    loc.directory_block = block_index;
-                    loc.directory_index = it;
+                if memcmp(step.data, entry.name.data, step.count) == 0 {
+                    loc = entry.loc;
                     continue step;
                 }
             }
         }
 
+        // We did not find the subdirectory
         return loc, false;
     }
 
     return loc, true;
 }
 
-create_entry :: (path_string: string, directory: bool) -> Filesystem_Result {
+create_item :: (path_string: string, directory: bool) -> Filesystem_Result {
     defer flush_filesystem();
 
     path := parse_path(path_string);
@@ -257,66 +275,92 @@ create_entry :: (path_string: string, directory: bool) -> Filesystem_Result {
         return .invalid_name;
     }
 
-    existing_loc, existing_success := find_entry(path);
-    if existing_success return .item_already_exists;
+    {
+//        existing_loc, existing_success := find_info_node(path);
+//        if existing_success return .item_already_exists;
+    }
 
     name := path[path.count - 1];
     path.count -= 1;
 
-    entry_loc, success := find_entry(path);
+    parent_info_loc, success := find_info_node(path);
     if !success return .item_doesnt_exist;
 
-    block := cast(*Directory_Entry) alloc(FS_BLOCKSIZE);
+    block := cast(*Info_Node) alloc(FS_BLOCKSIZE);
     defer free(block);
 
     now := get_time(fs_user_data);
     dir_block_index, new_entry_index: int;
     {
-        read\      _block(entry_loc.directory_block, xx block, fs_user_data); // "block" is the block with the directory entry representing the directory in which to create the new entry
-        defer write_block(entry_loc.directory_block, xx block, fs_user_data);
+        read_block(parent_info_loc.block, xx block, fs_user_data); // "block" is the block with the directory entry representing the directory in which to create the new entry
 
-        entry := block + entry_loc.directory_index;
+        parent_info_node := block + parent_info_loc.index;
 
-        entries_per_block := FS_BLOCKSIZE / size_of(Directory_Entry);
-        blocks_required := entry.directory_entry_count / entries_per_block + 1;
+        dir_block_index = parent_info_node.extents[0].block_index;
+        new_entry_index = parent_info_node.directory_entry_count;
 
-        blocks_available: int;
-        for entry.extents {
-            blocks_available += it.block_count;
-            // if blocks_available
-        }
+        parent_info_node.directory_entry_count += 1;
+        parent_info_node.modified = now;
 
-        bytes_required := blocks_required * FS_BLOCKSIZE;
+//        assert(parent_info_node.directory_entry_count < Constants.directory_entries_per_block, tprint("Too many directory entries in directory %: %, max is %", path[path.count-1], parent_info_node.directory_entry_count, Constants.directory_entries_per_block));
 
-        dir_block_index = entry.extents[0].block_index;
-        new_entry_index = entry.directory_entry_count;
-
-        entry.directory_entry_count += 1;
-        entry.modified = now;
+        write_block(parent_info_loc.block, xx block, fs_user_data);
     }
 
     {
-        read\      _block(dir_block_index, xx block, fs_user_data);
-        defer write_block(dir_block_index, xx block, fs_user_data);
+        // We need to add the directory entry, and then also allocate a new node info for it
+        read_block(dir_block_index, xx block, fs_user_data);
 
-        new_entry := block + new_entry_index;
+        new_entry := cast(*Directory_Entry) block + new_entry_index;
         << new_entry = .{};
-
-        if directory {
-            new_entry.flags |= .DIRECTORY;
-            maybe_create_or_grow_extent(*new_entry.extents[0], FS_BLOCKSIZE);
-        }
 
         assert(name.count < 32);
         memcpy(new_entry.name.data, name.data, name.count);
-        new_entry.created = now;
-        new_entry.modified = now; 
+
+        new_node_block := cast(*Info_Node) alloc(FS_BLOCKSIZE);
+        new_node_loc := allocate_info_node();
+
+        read_block(new_node_loc.block, xx new_node_block, fs_user_data);
+        new_node := new_node_block + new_node_loc.index;
+
+        new_node.created = now;
+        new_node.modified = now;
+
+        new_entry.loc = new_node_loc;
+
+        if directory {
+            new_node.flags |= .DIRECTORY;
+            maybe_create_or_grow_extent(*new_node.extents[0], FS_BLOCKSIZE);
+        }
+
+        write_block(dir_block_index, xx block, fs_user_data);
+        write_block(new_node_loc.block, xx new_node_block, fs_user_data);
+
+        free(new_node_block);
     }
 
     return .success;
 }
 
+allocate_info_node :: () -> Info_Node_Loc {
+    master_block: *Master_Block = alloc(FS_BLOCKSIZE);
+    defer free(master_block);
 
+    read_block(0, xx master_block, fs_user_data);
+    defer write_block(0, xx master_block, fs_user_data);
+
+    defer read_block(0, xx *filesystem_cache.master, fs_user_data);
+
+    count := master_block.info_node_count;
+    loc: Info_Node_Loc;
+    loc.block = 3 + count / Constants.info_nodes_per_block;
+    assert(loc.block <= 5, "Not enough room for info nodes");
+    loc.index = count % Constants.info_nodes_per_block;
+
+    master_block.info_node_count += 1;
+
+    return loc;
+}
 
 Disk_Block :: [FS_BLOCKSIZE] u8;
 
@@ -348,23 +392,23 @@ Filesystem_Result :: enum s64 {
 }
 
 create_file :: (name: string) -> Filesystem_Result {
-    return create_entry(name, false);
+    return create_item(name, false);
 }
 
 write_file :: (path: string, data: [] u8) -> Filesystem_Result {
     defer flush_filesystem();
 
-    loc, success := find_entry(parse_path(path));
+    loc, success := find_info_node(parse_path(path));
     if !success return .item_doesnt_exist;
 
     block := alloc(FS_BLOCKSIZE);
-    read_block(loc.directory_block, block, fs_user_data);
+    read_block(loc.block, block, fs_user_data);
 
-    dir_entry := cast(*Directory_Entry) block + loc.directory_index;
-    if dir_entry.flags & .DIRECTORY return .item_is_wrong_kind;
+    parent_info_node := cast(*Info_Node) block + loc.index;
+    if parent_info_node.flags & .DIRECTORY return .item_is_wrong_kind;
 
     remaining := data.count;
-    for *dir_entry.extents {
+    for *parent_info_node.extents {
         maybe_create_or_grow_extent(it, remaining);
 
         data_pointer := data.data + (data.count - remaining);
@@ -373,10 +417,10 @@ write_file :: (path: string, data: [] u8) -> Filesystem_Result {
         if remaining <= 0 break;
     }
 
-    dir_entry.modified = get_time(fs_user_data);
-    dir_entry.file_size = data.count;
+    parent_info_node.modified = get_time(fs_user_data);
+    parent_info_node.file_size = data.count;
 
-    write_block(loc.directory_block, block, fs_user_data);
+    write_block(loc.block, block, fs_user_data);
     free(block);
 
     return .success;
@@ -385,20 +429,20 @@ write_file :: (path: string, data: [] u8) -> Filesystem_Result {
 read_file :: (path: string) -> [] u8, Filesystem_Result {
     defer flush_filesystem();
 
-    loc, success := find_entry(parse_path(path));
+    loc, success := find_info_node(parse_path(path));
     if !success return .[], .item_doesnt_exist;
 
     block := alloc(FS_BLOCKSIZE);
-    read_block(loc.directory_block, block, fs_user_data);
+    read_block(loc.block, block, fs_user_data);
 
-    dir_entry := cast(*Directory_Entry) block + loc.directory_index;
-    if dir_entry.flags & .DIRECTORY return .[], .item_is_wrong_kind;
+    parent_info_node := cast(*Info_Node) block + loc.index;
+    if parent_info_node.flags & .DIRECTORY return .[], .item_is_wrong_kind;
 
-    data := alloc(dir_entry.file_size);
-    remaining := dir_entry.file_size;
+    data := alloc(parent_info_node.file_size);
+    remaining := parent_info_node.file_size;
 
     cursor: int;
-    for dir_entry.extents {
+    for parent_info_node.extents {
         read := read_data_from_extent(it, data + cursor, remaining);
         cursor += read;
         remaining -= read;
@@ -409,7 +453,7 @@ read_file :: (path: string) -> [] u8, Filesystem_Result {
 
     result: [] u8;
     result.data = data;
-    result.count = dir_entry.file_size;
+    result.count = parent_info_node.file_size;
 
     free(block);
     return result, .success;
@@ -426,48 +470,59 @@ Directory_Entry_Info :: struct {
 list_directory :: (path: string) -> [] Directory_Entry_Info, Filesystem_Result {
     defer flush_filesystem();
 
-    block := cast(*Directory_Entry) alloc(FS_BLOCKSIZE);
+    block := cast(*Info_Node) alloc(FS_BLOCKSIZE);
     defer free(block);
 
-    entry_loc, success := find_entry(parse_path(path));
+    loc, success := find_info_node(parse_path(path));
     if !success return .[], .item_doesnt_exist;
 
-    read_block(entry_loc.directory_block, xx block, fs_user_data);
+    read_block(loc.block, xx block, fs_user_data);
 
-    entry := block + entry_loc.directory_index;
-    if !(entry.flags & .DIRECTORY)  return .[], .item_is_wrong_kind;
-    if !entry.extents[0].block_count return .[], .success;
+    info_node := block + loc.index;
+    if !(info_node.flags & .DIRECTORY)  return .[], .item_is_wrong_kind;
+    if !info_node.extents[0].block_count return .[], .success;
 
     directory := cast(*Directory_Entry) alloc(FS_BLOCKSIZE);
     defer free(directory);
-    read_block(entry.extents[0].block_index, xx directory, fs_user_data);
+    read_block(info_node.extents[0].block_index, xx directory, fs_user_data);
+
+    current_file_block := cast(*Info_Node) alloc(FS_BLOCKSIZE);
+    defer free(current_file_block);
 
     result: [..] Directory_Entry_Info;
-    for 0..entry.directory_entry_count - 1 {
-        sub_entry := directory + it;
+    for 0..info_node.directory_entry_count - 1 {
+        entry := directory + it;
+        name: string;
+        name.count = c_style_strlen(entry.name.data);
+        name.data = entry.name.data;
+
+        new_path := ifx path.count tprint("%/%", path, name) else name;
+
+        node_loc, success := find_info_node(parse_path(new_path));
+        assert(success);
+
+        read_block(node_loc.block, xx current_file_block, fs_user_data);
+        node := current_file_block + node_loc.index;
 
         info := array_add(*result);
-        info.name.count = c_style_strlen(sub_entry.name.data);
-        info.name.data = sub_entry.name.data;
-        info.name = copy_string(info.name);
+        info.name = copy_string(name);
+        info.modified = node.modified;
+        info.created = node.created;
 
-        info.modified = sub_entry.modified;
-        info.created = sub_entry.created;
-
-        info.file_size_or_entry_count_if_directory = sub_entry.file_size;
-        if sub_entry.flags & .DIRECTORY  info.type = .DIR;
+        info.file_size_or_entry_count_if_directory = node.file_size;
+        if node.flags & .DIRECTORY  info.type = .DIR;
         else info.type = .FILE;
     }
 
     return result, .success;
 }
 
-get_root :: () -> *Directory_Entry {
+get_root :: () -> *Info_Node {
     return *filesystem_cache.master.root;
 }
 
 flush_filesystem :: () {
-    // write_block(0, xx *filesystem_cache.master, fs_user_data);
+//    write_block(0, xx *filesystem_cache.master, fs_user_data);
     write_block(1, xx *filesystem_cache.bitmap, fs_user_data);
 }
 
@@ -477,22 +532,23 @@ MAGIC :: #run -> u64 {
     return result;
 }
 
-format_filesystem :: (name: string) -> bool {
+format_filesystem :: () -> bool {
     for *filesystem_cache.array {
         memset(it, 0, FS_BLOCKSIZE);
     }
 
     master.magic = MAGIC;
     master.version = 1;
-    if name.count > 64 return false;
-    memcpy(master.root.name.data, name.data, name.count);
     master.root.flags = .DIRECTORY;
 
     fs_bit_array.slots.data = xx *filesystem_cache.bitmap;
     fs_bit_array.slots.count = FS_BLOCKSIZE / size_of(s64);
     fs_bit_array.count = FS_BLOCKSIZE * 8;
 
-    for 0..2 {
+    // Blocks:
+    // | Master | Bitmap | Root Directory entries | Inodes | Inodes | Inodes |
+
+    for 0..5 {
         set_bit(*fs_bit_array, it);
     }
     master.root.extents[0].block_index = 2;

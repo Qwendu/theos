@@ -305,6 +305,8 @@ interrupt_handlers: [] struct {
 
                 patch_procedure_linkage_table(cast([] u8) elf, patches, default);
 
+                context.print_style.default_format_int.base = 16;
+
                 generated_asm: String_Builder;
                 append(*generated_asm, "\n");
                 append(*generated_asm, tprint("kernel_entry_point    equ 0x%\n", elf_header.e_entry));
@@ -396,10 +398,10 @@ interrupt_handlers: [] struct {
                 hash := sdbm_hash(source_code.data, source_code.count) ^ library_hash ^ build_program_hash;
                 array_add(*new_hashes, hash);
 
-                if name != "example" continue filename;
-                // for hashes if it == hash {
-                //     continue filename;
-                // }
+                // if name != "example" continue filename;
+                for hashes if it == hash {
+                    continue filename;
+                }
                 context.logger = (message: string, *void, Log_Info) {};
                 build_formosa_app(name);
             }
@@ -420,7 +422,7 @@ interrupt_handlers: [] struct {
         kernel := file_open(".build/kernel.bin");
         file_read(kernel, disk_image + cursor, file_length(kernel));
         cursor += file_length(kernel);
-        print("Kernel size, bytes: 0x%\n", formatInt(file_length(kernel), base=16));
+        print("Kernel size, bytes: %\n", file_length(kernel));
 
         Fs_Data :: struct {
             disk_image: *void;
@@ -446,9 +448,7 @@ interrupt_handlers: [] struct {
             return apollo;
         };
 
-        fs_name, success := os_get_username();
-        if !success fs_name = "main drive";
-        format_filesystem(fs_name);
+        format_filesystem();
 
         visit_files("filesystem", true, fs_user_data, (info: *File_Visit_Info, user_data: *void) {
             name := info.full_name;
@@ -457,7 +457,7 @@ interrupt_handlers: [] struct {
 
             (cast(*Fs_Data) user_data).current_time = info.modification_time;
 
-            if info.is_directory create_entry(name, directory = true);
+            if info.is_directory create_item(name, directory = true);
             else {
                 create_file(name);
                 content := read_entire_file(info.full_name);
@@ -466,7 +466,6 @@ interrupt_handlers: [] struct {
         }, visit_directories = true);
 
         flush_filesystem();
-
         make_directory_if_it_does_not_exist("disk_images");
 
         write_entire_file("disk_images/formosa.img", disk_image, DISK_SIZE);
@@ -533,6 +532,7 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, defaul
     for *default_names {
         (<< it) = tprint(default_target, it_index - 1);
     }
+    context.print_style.default_format_int.base = 10;
 
     for 0..elf_header.e_shnum - 1 {
         header := get_section_header(it);
@@ -605,6 +605,7 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, defaul
         }
     }
 
+    successful_patches: [..] string;
     for 0..elf_header.e_shnum - 1 {
         header := get_section_header(it);
         if header.sh_type != SHT_PROGBITS continue;
@@ -646,12 +647,17 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, defaul
                 continue;
             }
 
+            array_add(*successful_patches, patch.target);
+
             elf.data[patch_target] = 0xe9;
             << (cast(*s32) (elf.data + patch_target + 1)) = xx jump;
         }
 
         break;
     }
+
+    print("Successful patches: %\n", successful_patches);
+    // for successful_patches
 }
 
 using Basic :: #import "Basic";
@@ -738,7 +744,7 @@ global task_switch
 align 0x8
 task_switch:
     cli
-    ; push_all
+    push_all
 
     mov rcx, [rax]
 
@@ -749,7 +755,7 @@ task_switch:
     mov rsp, [rbx] ; Restore the stack pointer from the current (new) task
     mov rdx, [rbx + 8]
     mov cr3, rdx ; Restore the page table from the current (new) task
-    ; pop_all
+    pop_all
 
     iretq
 
