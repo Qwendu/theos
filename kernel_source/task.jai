@@ -28,6 +28,8 @@ Task_Info :: struct {
 
         input_data: Any;
         output_data: Any;
+
+        name: string;
     };
 }
 
@@ -134,7 +136,10 @@ exit :: () {
     unmap_memory(task.thread_storage_size, cast(u64) task.thread_storage);
 
     task.state = .RETIRED;
-    if shell.foreground_task == task  shell.foreground_task = *the_first_task;
+    if shell.foreground_task == task {
+        shell.foreground_task = *the_first_task;
+    }
+
     yield();
 }
 
@@ -241,4 +246,21 @@ move_to_front :: (window: Window_Handle) {
     w.blitter.draw.next = null;
 
     paint_screen();
+}
+
+
+MAX_FILE_POINTERS :: 64;
+file_pointers: [MAX_FILE_POINTERS] File_Pointer;
+
+File_Pointer :: struct {
+    inode_id: int;
+    reference_count: int;
+}
+
+MAX_FILE_DESCRIPTORS :: 64;
+file_descriptors: [MAX_FILE_DESCRIPTORS] File_Descriptor;
+
+File_Descriptor :: struct {
+    file_pointer_id: int;
+    has_write_access: bool;
 }

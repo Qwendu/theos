@@ -73,3 +73,4 @@ filesystem/image_test.jpg
 filesystem/OpenSans-BoldItalic.ttf
 freetype-2.12.1.tar.gz
 freetype-2.12.1/*
+filesystem/programs/create_many_files

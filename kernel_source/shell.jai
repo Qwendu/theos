@@ -108,8 +108,8 @@ init_shell :: (font: Pnm) {
     old_history := read_file("system/history");
     if !old_history.count {
         create_file("system/history");
-    } else for String.split(cast(string) old_history, "\n") {
-        Basic.array_add(*shell.history, it);
+    } else for split(cast(string) old_history, "\n") {
+        array_add(*shell.history, it);
     }
     shell.history_index = shell.history.count;
 }
@@ -298,11 +298,11 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
                 update_syntax_highlighting();
 
                 if command != shell.history[shell.history.count - 1] {
-                    Basic.array_add(*shell.history, Basic.copy_string(command));
+                    array_add(*shell.history, copy_string(command));
                 }
 
                 history := cast(string) read_file("system/history");
-                history = Basic.tprint("%\n%", history, command);
+                history = tprint("%\n%", history, command);
                 write_file("system/history", cast([] u8) history);
             }
             shell.history_index = shell.history.count;
@@ -382,10 +382,10 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
 
         else if key_code == .TAB {
             // calendar := cmos_get_calendar_time();
-            // printf("The CMOS time is %.\n", Basic.calendar_to_string(calendar));
+            // printf("The CMOS time is %.\n", calendar_to_string(calendar));
             // 
             // calendar = formosa_apollo_to_calendar(system_time);
-            // printf("The SYSTEM time is %.\n", Basic.calendar_to_string(calendar));
+            // printf("The SYSTEM time is %.\n", calendar_to_string(calendar));
             // return "";
 
             if !is_reading_string {
@@ -472,13 +472,13 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
 
     if !parse_success return;
 
-    exe := read_file(Basic.tprint("programs/%", name));
+    exe := read_file(tprint("programs/%", name));
     defer unmap_memory(exe.count, xx exe.data);
     if !exe.count && parse_args.count == 0 {
         entries := list_directory("programs");
 
         for entries {
-            if String.begins_with_nocase(it.name, name) {
+            if begins_with_nocase(it.name, name) {
                 shell.command_text.used = tokens[tokens.count - 2].start + 2;
                 write_to_text_viewer(*shell.command_text, it.name);
                 write_to_text_viewer(*shell.command_text, " ");
@@ -513,7 +513,7 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
         if type_table[index].type == .ENUM {
             tie := cast(*Type_Info_Enum) type_table[index];
             for tie.names {
-                if String.begins_with_nocase(it, last_arg._string) {
+                if begins_with_nocase(it, last_arg._string) {
                     shell.command_text.used = last_arg.token_or_null.start + 2;
                     write_to_text_viewer(*shell.command_text, it);
                     write_to_text_viewer(*shell.command_text, ", ");
@@ -534,7 +534,7 @@ do_autocomplete_inefficiently_using_copypasta_code :: () {
 //            other_name.data = dir_entry.name.data;
 //            other_name.count = c_style_strlen(dir_entry.name.data);
 //
-//            if String.begins_with_nocase(other_name, last_arg._string) {
+//            if begins_with_nocase(other_name, last_arg._string) {
 //                shell.command_text.used = last_arg.token_or_null.start + 2;
 //                write_to_text_viewer(*shell.command_text, "\"");
 //                write_to_text_viewer(*shell.command_text, other_name);
@@ -594,7 +594,7 @@ shell_update_command_lists :: () {
 }
 
 shell_load_program :: (step: Command_Step) -> *Task_Info {
-    exe := read_file(Basic.tprint("programs/%", step.name));
+    exe := read_file(tprint("programs/%", step.name));
     defer unmap_memory(exe.count, xx exe.data);
 
     if !exe.count {
@@ -611,10 +611,11 @@ shell_load_program :: (step: Command_Step) -> *Task_Info {
 
     if !step.parameters.count {
         task := load_program(exe);
+        task.parent_process.name = copy_string(step.name);
         return task;
     }
 
-    args := Basic.NewArray(32, Any);
+    args := NewArray(32, Any);
 
     type_table: [] *Type_Info;
     type_table.count = header.input_parameter_count;
@@ -630,9 +631,9 @@ shell_load_program :: (step: Command_Step) -> *Task_Info {
                 the_enum := cast(*Type_Info_Enum) type_table[it_index];
                 found: bool;
 
-                String.to_lower_in_place(it._string);
+                to_lower_in_place(it._string);
                 for name: the_enum.names {
-                    if String.to_lower_copy(name) == it._string {
+                    if to_lower_copy(name) == it._string {
                         it._int = the_enum.values[it_index];
                         found = true;
                         break;
@@ -658,6 +659,8 @@ shell_load_program :: (step: Command_Step) -> *Task_Info {
     the_args.data = args.data;
 
     task := load_program(exe, .. the_args);
+    task.parent_process.name = copy_string(step.name);
+
     return task;
 }
 
@@ -667,10 +670,10 @@ shell_handle_text_command :: (command_string: string) -> bool {
     parse_success, steps, tokens := parse_command(command_string);
     if !parse_success || !steps.count return false;
 
-    list := Basic.array_add(*command_lists);
+    list := array_add(*command_lists);
     for steps {
-        entry := Basic.array_add(list);
-        entry.name = Basic.copy_string(it.name);
+        entry := array_add(list);
+        entry.name = copy_string(it.name);
 
         entry.parameters.data = map_memory(size_of(Shell_Typed_Value) * it.parameters.count);
         entry.parameters.count = it.parameters.count;
@@ -678,7 +681,7 @@ shell_handle_text_command :: (command_string: string) -> bool {
         for it.parameters {
             entry.parameters[it_index] = it;
             if it.type == .IDENT || it.type == .STRING {
-                entry.parameters[it_index]._string = Basic.copy_string(it._string);
+                entry.parameters[it_index]._string = copy_string(it._string);
             }
         }
     }
@@ -754,7 +757,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
         tok := tokens[index];
         if tok.type == .EOT return true, steps, tokens;
 
-        step := Basic.array_add(*steps);
+        step := array_add(*steps);
 
         if tok.type != .IDENT {
             generate_parse_error("Type the name of a command to run.\n");
@@ -946,6 +949,27 @@ tokenize_command :: (command: string) -> [..] Token {
     return result;
 }
 
+represent_apollo_delta :: (time: Basic.Apollo_Time) -> string {
+    s, success := Basic.to_seconds(time);
+    assert(success);
+    if s < 60  return Basic.tprint("% second%", s, ifx s == 1 then "" else "s");
+
+    m := s / 60;
+    if m < 60  return Basic.tprint("% minute%", m, ifx m == 1 then "" else "s");
+
+    h := m / 60;
+    if h < 24  return Basic.tprint("% hour%", h, ifx h == 1 then "" else "s");
+    
+    d := h / 24;
+    if d < 30  return Basic.tprint("% day%", d, ifx d == 1 then "" else "s");
+    
+    m = d / 30;
+    if m < 12  return Basic.tprint("% month%", m, ifx m == 1 then "" else "s");
+
+    y := m / 12;
+    return Basic.tprint("% year%", y, ifx y == 1 then "" else "s");
+}
+
 print_ipc_data :: (value: Any) {
     if value.value_pointer == null return;
     if value.type == null return;
@@ -978,8 +1002,7 @@ print_ipc_data :: (value: Any) {
                     for it.notes {
                         if it == "Formosa.apollo" {
                             time: *Basic.Apollo_Time = xx thing.value_pointer;
-                            date := formosa_apollo_to_calendar(<< time);
-                            length = Basic.tprint("%", Basic.calendar_to_string(date)).count;
+                            length = represent_apollo_delta(Basic.operator-(get_system_time(), << time)).count;
                             apollo = true;
                         }
 
@@ -1031,8 +1054,7 @@ print_ipc_data :: (value: Any) {
 
                         if it == "Formosa.apollo" {
                             time: *Basic.Apollo_Time = xx thing.value_pointer;
-                            date := formosa_apollo_to_calendar(<< time);
-                            to_print = Basic.tprint("%", Basic.calendar_to_string(date));
+                            to_print = represent_apollo_delta(Basic.operator-(get_system_time(), << time));
                             apollo = true;
                         }
                     }

@@ -11,6 +11,11 @@ main :: (file_name: string) {
         return;
     }
 
+    if !file.count {
+        write_string("(empty)");
+        return;
+    }
+
     if file[0] == #char "\n" || file[0] == #char "\r" {
         file.data += 1;
         file.count -= 1;

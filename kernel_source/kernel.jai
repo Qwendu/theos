@@ -1,6 +1,6 @@
 
-Basic  :: #import "Basic";
-String :: #import "String";
+using,except .["get_system_time"] Basic :: #import "Basic";
+#import "String";
 
 #import "Machine_X64";
 #import "Elf";
@@ -116,7 +116,7 @@ kernel_entry :: () {
             boot_drive = it;
         }
 
-        assert(!!boot_drive, "Could not find the boot disk");
+        assert(!!boot_drive, "Could not find the boot disk. Only SATA disks are supported, not NVMe or USB.");
 
         read_block = (block_index: int, block: *Disk_Block, *void) {
             location := FS_BASE_ADDRESS + block_index * FS_BLOCKSIZE;
@@ -128,20 +128,23 @@ kernel_entry :: () {
             write_mass_storage(boot_drive, block, FS_BLOCKSIZE, location);
         };
 
-        // read_extent = (block_index: int, block_count: int, data: *void, user_data: *void) {
-        //     buffer := map_memory(block_count * FS_BLOCKSIZE, physically_contiguous = true);
-        //     location := FS_BASE_ADDRESS + block_index * FS_BLOCKSIZE;
-        //     read_mass_storage(boot_drive, buffer, xx (block_count * FS_BLOCKSIZE), xx location);
-        //     memcpy(data, buffer, block_count * FS_BLOCKSIZE);
-        // };
+        read_extent = (block_index: int, block_count: int, data: *void, user_data: *void) {
+            if !block_count return;
+            buffer := map_memory(block_count * FS_BLOCKSIZE, physically_contiguous = true);
+            location := FS_BASE_ADDRESS + block_index * FS_BLOCKSIZE;
+            read_mass_storage(boot_drive, buffer, xx (block_count * FS_BLOCKSIZE), xx location);
+            memcpy(data, buffer, block_count * FS_BLOCKSIZE);
+        };
 
-        get_time = (user: *void) -> Basic.Apollo_Time {
+        get_timestamp = (user: *void) -> Apollo_Time {
             return get_system_time();
         };
 
         assert(initialize_filesystem());
 
-        font_file := read_file("system/font.pgm");
+        font_file, filesystem_result := read_file("system/font.pgm");
+        assert(filesystem_result == .success, tprint("Was: %\n", filesystem_result));
+
         font: Pnm = parse_pnm(font_file);
 
         ct := cmos_get_calendar_time();
@@ -159,7 +162,7 @@ kernel_entry :: () {
         init_shell(font);
 
         startup := read_file("system/startup");
-        commands := String.split(cast(string) startup, "\n");
+        commands := split(cast(string) startup, "\n");
 
         for commands {
             shell_handle_text_command(it);
@@ -170,8 +173,6 @@ kernel_entry :: () {
         paint_screen();
 
         while true {
-            // #asm { hlt; }
-
             handle_keyboard_events();
             handle_mouse_events();
             update_shell();
@@ -199,7 +200,7 @@ print_stack_trace :: (stack := context.stack_trace) {
     node := stack;
     while node {
         if node.info != null {
-            filename := String.path_filename(node.info.location.fully_pathed_filename);
+            filename := path_filename(node.info.location.fully_pathed_filename);
             printf("   | %:% in ", filename, node.line_number);
             printf("%", node.info.name, color = theme.primary);
             print("()\n");
@@ -251,15 +252,17 @@ assertion_failed :: (location: Source_Code_Location, message: string) {
     print_stack_trace();
     paint_screen();
 
-    while true {
-        #asm { hlt; }
+    if current_task == *the_first_task {
+        print("This assertion failure happened the kernel Sadge\nThere is nothing left to say or do");
+        paint_screen();
+        while true {
+            #asm { hlt; }
+        }
+    } else {
+        exit();
     }
 }
 
-min :: (a: $T, b: T) -> T { if a < b return a; return b; }
-max :: (a: $T, b: T) -> T { if a > b return a; return b; }
-
-#program_export
 crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
     #asm {
         cld;
@@ -273,7 +276,6 @@ crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
     return target;
 }
 
-#program_export
 crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     #asm {
         cld;
@@ -287,7 +289,6 @@ crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     return dst;
 }
 
-#program_export
 crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
     for 0..(cast(s64) count)-1 {
         if a[it] != b[it] {
@@ -468,8 +469,8 @@ sleep :: (ms: int) {
     while true {
 //        #asm { hlt; }
 
-        elapsed := Basic.operator-(get_system_time(), time);
-        if Basic.to_milliseconds(elapsed) > ms break;
+        elapsed := operator-(get_system_time(), time);
+        if to_milliseconds(elapsed) > ms break;
     }
 }
 
@@ -651,7 +652,7 @@ idt_init :: () {
     }
 }
 
-Interrupts :: #foreign_library,no_dll "../.build/interrupt";
+Interrupts :: #library,no_dll "../.build/interrupt";
 
 
 Pic_Port :: enum u16 {
@@ -855,8 +856,8 @@ cmos_set_rate :: (rate: u8) {
     #asm { sti; }
 }
 
-cmos_get_calendar_time :: () -> Basic.Calendar_Time {
-    cal: Basic.Calendar_Time;
+cmos_get_calendar_time :: () -> Calendar_Time {
+    cal: Calendar_Time;
     cal.time_zone = .UTC;
 
     cal.month\      _starting_at_0 = cast(s8) cmos_read(.MONTH) - 1;
@@ -871,7 +872,7 @@ cmos_get_calendar_time :: () -> Basic.Calendar_Time {
     return cal;
 }
 
-formosa_calendar_to_apollo :: (ct: Basic.Calendar_Time) -> Basic.Apollo_Time {
+formosa_calendar_to_apollo :: (ct: Calendar_Time) -> Apollo_Time {
     using Basic;
     leap_year_count := leap_years_before(cast(s64) ct.year - 1) - leap_years_before(1970);
     year_difference := cast(s64) ct.year - 1970;
@@ -896,18 +897,18 @@ formosa_calendar_to_apollo :: (ct: Basic.Calendar_Time) -> Basic.Apollo_Time {
     seconds += 86400 * cast(int) ct.day_of_month_starting_at_0;
     seconds += cast(int) ct.hour * 60 * 60 + cast(int) ct.minute * 60 + cast(int) ct.second;
 
-    APOLLO_TIME_FOR_JAN_1_1970 :: Basic.Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
+    APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
 
-    apollo := Basic.seconds_to_apollo(seconds);
-    apollo += Basic.milliseconds_to_apollo(ct.millisecond);
+    apollo := seconds_to_apollo(seconds);
+    apollo += milliseconds_to_apollo(ct.millisecond);
     apollo += APOLLO_TIME_FOR_JAN_1_1970;
     return apollo;
 }
 
-formosa_apollo_to_calendar :: (apollo: Basic.Apollo_Time) -> Basic.Calendar_Time {
+formosa_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
     using Basic;
-    APOLLO_TIME_FOR_JAN_1_1970 :: Basic.Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
-    milliseconds := Basic.to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);
+    APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
+    milliseconds := to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);
 
     seconds      := milliseconds / 1000;
     minutes      := seconds      / 60;
@@ -932,7 +933,7 @@ formosa_apollo_to_calendar :: (apollo: Basic.Apollo_Time) -> Basic.Calendar_Time
     is_leap_year := (years % 4 == 0) && (!(years % 100 == 0) || (years % 400 == 0));
     if is_leap_year && days < 59 days += 1;
 
-    ct: Basic.Calendar_Time;
+    ct: Calendar_Time;
 
     days_in_month := int.[
         31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
@@ -985,7 +986,7 @@ cmos_interrupt :: () #c_call {
     pic_end_of_interrupt(.CMOS_RTC);
 }
 
-get_system_time :: () -> Basic.Apollo_Time {
+get_system_time :: () -> Apollo_Time {
     using Basic;
 
     ticks := read(Hpet_Register.COUNTER);
@@ -997,7 +998,7 @@ get_system_time :: () -> Basic.Apollo_Time {
     return elapsed + boot_time;
 }
 
-boot_time: Basic.Apollo_Time;
+boot_time: Apollo_Time;
 
 timer_ticks_elapsed: u64;
 timer_ticks_target: u64;
@@ -1083,13 +1084,9 @@ acpi_get_table_by_signature :: (sig: string) -> *Acpi_Table_Header {
         phys: u64;
         if acpi.version == 0 {
             phys = cast(u64) << cast(*u32) (it * 4 + table_base);
-        }
-
-        else if acpi.version == 2 {
+        } else if acpi.version == 2 {
             phys = << cast(*u64) (it * 8 + table_base);
-        }
-
-        else assert(false);
+        } else assert(false);
 
         virt := map_memory(0x1000, physical_address = phys);
         offset_in_page := phys % 0x1000;
@@ -1931,7 +1928,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             prompt.count = xx  data.rcx;
 
             clear_text_viewer(*shell.command_text);
-            write_to_text_viewer(*shell.command_text, Basic.tprint("% > ", prompt));
+            write_to_text_viewer(*shell.command_text, tprint("% > ", prompt));
             update_syntax_highlighting();
 
             while true {
@@ -1965,7 +1962,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 watermark: int;
             }
 
-            allocator_data.space = map_memory(0x1_0000);
+            allocator_data.space = map_memory(0x10_0000);
             context.allocator.proc = (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: *void, user_data: *void) -> *void {
                 if mode != .ALLOCATE return null;
 
@@ -1977,7 +1974,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                     data.watermark += 8 - (data.watermark % 8);
                 }
 
-                assert(data.watermark < 0x1_0000);
+                assert(data.watermark < 0x10_0000);
                 return result;
             };
 
@@ -2070,10 +2067,10 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
           case LIST_DIRECTORY;
             name := << cast(*string) data.rbx;
             res: Filesystem_Result;
-            << cast(*[] Directory_Entry_Info) data.rcx, res = list_directory(name);
+            << cast(*[] File_Status) data.rcx, res = list_directory(name);
             if res == .item_is_wrong_kind {
                 print("List directory called on a file!\n");
-                << cast(*[] Directory_Entry_Info) data.rcx = .[];
+                << cast(*[] File_Status) data.rcx = .[];
             }
 
           case GET_THEME;
@@ -2096,7 +2093,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             shell.text.draw.dirty = true;
 
           case GET_TIME;
-            << cast(*Basic.Apollo_Time) data.rbx = get_system_time();
+            << cast(*Apollo_Time) data.rbx = get_system_time();
 
           case GET_DEVICE_LIST;
             device_list: [] Hardware_Device;
@@ -2146,7 +2143,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
 
           case;
             HexMode();
-            assert(false, Basic.tprint("Not a syscall number: 0x%", data.rax));
+            assert(false, tprint("Not a syscall number: 0x%", data.rax));
         }
 
     }
@@ -2228,8 +2225,8 @@ Timeout :: (code: Code, message := "", time := 1000) #expand {
     start := get_system_time();
     while true {
         #insert code;
-        elapsed := Basic.operator-(get_system_time(), start);
-        assert(Basic.to_milliseconds(elapsed) < time, message);
+        elapsed := operator-(get_system_time(), start);
+        assert(to_milliseconds(elapsed) < time, message);
     }
 }
 
@@ -2239,7 +2236,7 @@ Timeout :: (code: Code, message := "", time := 1000) #expand {
         context.print_style.default_format_int.comma_string = "_";
         context.print_style.default_format_int.digits_per_comma = 3;
         for 0..63 {
-            result = String.join(result, Basic.tprint("BIT_% :: %;\n", it, cast(u64)1 <<  it));
+            result = join(result, tprint("BIT_% :: %;\n", it, cast(u64)1 <<  it));
         }
     }
     return result;
@@ -2458,4 +2455,23 @@ write_string :: (message: string) #no_context {
     push_context kernel_context {
         print(message);
     }
+}
+
+// Debug log routine invented by Farzher
+logx :: ($code: Code, loc := #caller_location) -> code.type #expand {
+    result := #insert code;
+    filename := path_filename(loc.fully_pathed_filename);
+    expression_string := #run code_to_string(code);
+    log("[%:%] % = %", filename, loc.line_number, expression_string, result);
+    return result;
+}
+
+code_to_string :: (code: Code) -> string #expand {
+    #import "Program_Print";
+    compiler :: #import "Compiler";
+
+    code_node := compiler.compiler_get_nodes(code);
+    builder: String_Builder;
+    print_expression(*builder, code_node);
+    return builder_to_string(*builder, allocator=temp);
 }

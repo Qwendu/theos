@@ -130,10 +130,10 @@ interrupt_handlers: [] struct {
 
     version_info: Version_Info;
     compiler_get_version_info(*version_info);
-    if memcmp(*version_info, *Version_Info.{0, 1, 47}, size_of(Version_Info)) != 0 {
+    if memcmp(*version_info, *Version_Info.{0, 1, 49}, size_of(Version_Info)) != 0 {
         using version_info;
-        print("This is the wrong version of the compiler! You need 0.1.047, but have %.%.0%\n", major, minor, micro);
-        print("However there's a good chance it works anyway, so continuing.\n");
+        print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.049, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
+        print("However there's a chance it works anyway, so continuing\n");
     }
 
     make_directory_if_it_does_not_exist(".build");
@@ -411,7 +411,7 @@ interrupt_handlers: [] struct {
 
     write_string("\n=== Creating Floppy Image ===\n");
     {
-        DISK_SIZE :: 0x16_8000 * 32;
+        DISK_SIZE :: 0x16_8000 * 64;
         disk_image := cast(*u8) alloc(DISK_SIZE);
         cursor: int;
 
@@ -443,7 +443,7 @@ interrupt_handlers: [] struct {
             memcpy(block, (cast(*Fs_Data) user).disk_image + offset, FS_BLOCKSIZE);
         };
 
-        get_time = (user: *void) -> Apollo_Time {
+        get_timestamp = (user: *void) -> Apollo_Time {
             apollo := (cast(*Fs_Data) user).current_time;
             return apollo;
         };
@@ -497,12 +497,13 @@ assemble :: () -> bool {
 
 shell :: (format: string, args: .. Any, print_output := true, dont_quote := false) -> bool, int, string, string {
     command := tprint(format, .. args);
-    print("|shell| \u001b[36;1m\"%\"\u001b[0m\n", command);
+    print("|shell| \e[36;1m\"%\"\e[0m\n", command);
+
     result, stdout, stderr := run_command(.. split(command, " "), capture_and_return_output = true, arg_quoting = ifx dont_quote then .NEVER_QUOTE else Process_Argument_Quoting.QUOTE_IF_NEEDED);
 
     if print_output && stdout.count || stderr.count {
-        print("\u001b[33;1m%", stdout);
-        print("%\u001b[0m", stderr);
+        print("\e[33;1m%", stdout);
+        print("%\e[0m", stderr);
     }
 
     return !result.exit_code, result.exit_code, stdout, stderr;
@@ -660,7 +661,7 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, defaul
     // for successful_patches
 }
 
-using Basic :: #import "Basic";
+#import "Basic";
 #import "Compiler";
 #import "Process";
 #import "File";
@@ -668,7 +669,6 @@ using Basic :: #import "Basic";
 #import "String";
 #import "System";
 #import "Hash";
-#import "Print_Color";
 
 
 ISR_DECLARATION :: #string ISR
