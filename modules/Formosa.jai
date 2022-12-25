@@ -32,6 +32,28 @@ Syscall_Numbers :: enum {
     GET_WINDOW_BUFFER       :: 0x19;
     GET_MOUSE_POSITION      :: 0x20;
     GET_WINDOW_SIZE         :: 0x21;
+    SLEEP                   :: 0x22;
+}
+
+femtosleep :: (fs: u64) {
+    time: Apollo;
+    time.low = fs;
+    sleep(time);
+}
+
+sleep :: (time: Apollo) {
+    using Syscall_Numbers;
+
+    low := time.low;
+    high := time.high;
+
+    #asm {
+        mov rbx: gpr === b, high;
+        mov rcx: gpr === c, low;
+        mov rax: gpr === a, SLEEP;
+
+        int 0x80;
+    }
 }
 
 System_Params :: struct {
@@ -201,11 +223,11 @@ create_file :: (name: string) -> Filesystem_Result {
     return /* result */ .success;
 }
 
-list_directory :: (name: string) -> [] Directory_Entry_Info, Filesystem_Result {
+list_directory :: (name: string) -> [] File_Status, Filesystem_Result {
     using Syscall_Numbers;
     result: Filesystem_Result;
 
-    info: [] Directory_Entry_Info;
+    info: [] File_Status;
     _name := *name;
     _info := *info;
 
@@ -507,11 +529,12 @@ File_Information :: struct {
     modification_date: Apollo;
 }
 
-Directory_Entry_Info :: struct {
+File_Status :: struct {
     name: string;
 
-    type: enum int { dir; file; }
-    size: int; @Formosa.base16
+    type: enum int { folder; file; }
+    size: int; @Formosa.cond(type=file) @Formosa.bytes
+    entries: int; @Formosa.cond(type=folder) @Formosa.unit(entries)
 
     created: Apollo; @Formosa.apollo
     modified: Apollo; @Formosa.apollo

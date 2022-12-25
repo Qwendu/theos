@@ -198,7 +198,7 @@ interrupt_handlers: [] struct {
 
             // set_optimization_level(*options, 3, 0);
 
-            #if !ENABLE_IST options.disable_redzone = true;
+            options.disable_redzone = true;
             options.stack_trace = true;
 
             options.array_bounds_check = .OFF;
@@ -411,7 +411,8 @@ interrupt_handlers: [] struct {
 
     write_string("\n=== Creating Floppy Image ===\n");
     {
-        DISK_SIZE :: 0x16_8000 * 64;
+        DISK_SIZE :: 0x400_0000;
+
         disk_image := cast(*u8) alloc(DISK_SIZE);
         cursor: int;
 

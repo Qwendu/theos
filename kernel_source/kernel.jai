@@ -106,6 +106,9 @@ kernel_entry :: () {
         acpi_init();
         hpet_init();
 
+        ct := cmos_get_calendar_time();
+        boot_time = formosa_calendar_to_apollo(ct);
+
         initialize_task_manager();
 
         pci_scan_all_devices();
@@ -147,9 +150,6 @@ kernel_entry :: () {
 
         font: Pnm = parse_pnm(font_file);
 
-        ct := cmos_get_calendar_time();
-        boot_time = formosa_calendar_to_apollo(ct);
-
         enable_ps2();
 
         #if !ENABLE_VESA {
@@ -178,6 +178,8 @@ kernel_entry :: () {
             update_shell();
             move_mouse(mouse.position_x, mouse.position_y);
 
+            the_first_task.sleep_until = get_system_time() + milliseconds_to_apollo(10);
+            the_first_task.state = .SLEEPING;
             yield();
         }
     }
@@ -263,6 +265,7 @@ assertion_failed :: (location: Source_Code_Location, message: string) {
     }
 }
 
+#program_export
 crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
     #asm {
         cld;
@@ -276,6 +279,7 @@ crt_memset :: (target: *u8, value: s32, count: u64) -> *void #c_call {
     return target;
 }
 
+#program_export
 crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     #asm {
         cld;
@@ -289,6 +293,7 @@ crt_memcpy :: (dst: *void, src: *void, count: u64) -> *void #c_call {
     return dst;
 }
 
+#program_export
 crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
     for 0..(cast(s64) count)-1 {
         if a[it] != b[it] {
@@ -479,6 +484,7 @@ sleep :: (ms: int) {
 gdt: [10] u64 #align 0x80;
 
 Gdt_Entry_Flags :: enum {
+    AVAILABLE       :: 0x01 << 52;
     LONG_MODE_CODE  :: 0x02 << 52;
     SIZE            :: 0x04 << 52;
     GRANULARITY     :: 0x08 << 52;
@@ -495,77 +501,68 @@ Gdt_Entry_Flags :: enum {
 make_gdt_entry :: (base: u64, limit: u32, flags: u64) -> u64 {
     entry: u64;
 
-    target := cast(*u8) *entry;
-    target[0] = xx ((limit & 0xff));
-    target[1] = xx ((limit >> 8) & 0xff);
-    target[6] = xx ((limit >> 16) & 0x0f);
+    bytes := cast(*u8) *entry;
 
-    target[2] = xx (base & 0xff);
-    target[3] = xx ((base >> 8) & 0xff);
-    target[4] = xx ((base >> 16) & 0xff);
-    target[7] = xx ((base >> 24) & 0xff);
+    bytes[0] = cast(u8) (limit & 0xff);
+    bytes[1] = cast(u8) (limit >> 8) & 0xff;
+    bytes[6] = cast(u8) (limit >> 16) & 0x0f;
 
-    entry = << cast(*u64) target;
+    bytes[2] = cast(u8) (base & 0xff);
+    bytes[3] = cast(u8) (base >> 8) & 0xff;
+    bytes[4] = cast(u8) (base >> 16) & 0xff;
+    bytes[7] = cast(u8) (base >> 24) & 0xff;
+
+    entry = << cast(*u64) bytes;
     entry |= flags;
     return entry;
 }
 
-#if ENABLE_IST {
-    Task_State_Segment :: struct {
-        reserved_0: u32;
-        rsp:        [3] u64 #align 4;
-        reserved_1: [2] u32;
-        ist:        [7] u64 #align 4;
-        reserved_2: [2] u32;
-        reserved_3: u16;
-        iobp:       u16;
-    }
-    #assert(size_of(Task_State_Segment) == 0x68);
-
-    tss: Task_State_Segment #align 0x80;
+Task_State_Segment :: struct {
+    reserved_0: u32;
+    rsp:        [3] u64 #align 4;
+    reserved_1: [2] u32;
+    ist:        [7] u64 #align 4;
+    reserved_2: [2] u32;
+    reserved_3: u16;
+    iobp:       u16;
 }
+
+#assert(size_of(Task_State_Segment) == 0x68);
+
+tss: Task_State_Segment #align 0x80;
 
 gdt_init :: () {
     using Gdt_Entry_Flags;
 
     gdt[0] = 0x0;
-    gdt[1] = xx (READ_WRITE | PRESENT | DESCRIPTOR_TYPE | LONG_MODE_CODE | EXECUTABLE);
-    gdt[2] = xx (READ_WRITE | PRESENT | DESCRIPTOR_TYPE);
+    gdt[1] = cast(u64) (READ_WRITE | PRESENT | DESCRIPTOR_TYPE | LONG_MODE_CODE | EXECUTABLE);
+    gdt[2] = cast(u64) (READ_WRITE | PRESENT | DESCRIPTOR_TYPE);
 
-    #if ENABLE_IST {
-        gdt[3] = xx make_gdt_entry(xx *tss, size_of(Task_State_Segment), xx SIZE | xx (0x89 << 40));
-        gdt[4] = 0xffff_ffff;
-    }
+    gdt[3] = cast(u64) (READ_WRITE | PRESENT | DESCRIPTOR_TYPE | PRIVILEGE0 | PRIVILEGE1 | LONG_MODE_CODE | EXECUTABLE);
+    gdt[4] = cast(u64) (READ_WRITE | PRESENT | DESCRIPTOR_TYPE | PRIVILEGE0 | PRIVILEGE1);
+
+    gdt[5] = make_gdt_entry(cast(u64) *tss, size_of(Task_State_Segment), xx SIZE | xx (0x89 << 40));
+    gdt[6] = 0xffff_ffff;
 
     gdtr: struct {
         limit: u16;
         base: u64 #align 2;
     }
 
-    gdtr.limit = 0x20;
+    gdtr.limit = 0x38;
     gdtr.base = xx gdt.data;
 
     gdtrp := *gdtr;
-
-    #if ENABLE_IST {
-        for *tss.ist {
-            << it = KERNEL_BASE + 0x400_000 - it_index * 0x1000;
-        }
-
-        gdtr.limit += 0x8;
-        tss.iobp = size_of(Task_State_Segment);
-    }
-
     #asm {
         lgdt [gdtrp];
     }
 
-    #if ENABLE_IST {
-        #bytes .[
-            0x66, 0xb8, 0x18, 0x00, // mov ax, 0x18
-            0x0f, 0x00, 0xd8 // ltr ax
-        ];
-    }
+    tss.iobp = size_of(Task_State_Segment);
+
+    #bytes .[
+        0x66, 0xb8, 0x28, 0x00, // mov ax, 0x28
+        0x0f, 0x00, 0xd8 // ltr ax
+    ];
 }
 
 
@@ -624,8 +621,8 @@ idt_add_handler :: (address: *void, index: int) {
     entry.offset_1  = xx  _address        & 0xffff;
     entry.offset_2  = xx (_address >> 16) & 0xffff;
     entry.offset_3  = xx (_address >> 32) & 0xffffffff;
-    entry.selector  = 0b00001000;
-    entry.ist       = xx ifx ENABLE_IST 0x1 else 0x0;
+    entry.selector  = 0x8;
+    entry.ist       = 0x0;
     entry.flags     = 0x8e;
     entry.reserved  = 0x0;
 
@@ -638,14 +635,6 @@ idt_init :: () {
 
     register_generated_isrs();
 
-    #if ENABLE_IST {
-        idt[0x21].ist = 0x2;
-        idt[0x28].ist = 0x3;
-        idt[0x2c].ist = 0x4;
-        idt[0x2e].ist = 0x5;
-        idt[0x80].ist = 0x6;
-    }
-
     address := *idt_desc;
     #asm {
         lidt [address];
@@ -653,6 +642,7 @@ idt_init :: () {
 }
 
 Interrupts :: #library,no_dll "../.build/interrupt";
+
 
 
 Pic_Port :: enum u16 {
@@ -736,6 +726,40 @@ Pic_Request_Line :: enum {
     FPU             :: 0xd;
     PRIMARY_ATA     :: 0xe;
     SECONDARY_ATA   :: 0xf;
+}
+
+
+
+Apic :: struct {
+
+}
+
+apic: *Apic;
+
+Madt_Acpi_Table :: struct {
+    #as header: Acpi_Table_Header;
+    local_apic_address: u32;
+    flags: u32;
+}
+
+apic_init :: () {
+    assert(check_feature(cpu.feature_leaves, .APIC), "CPU does not have a built-in local APIC");
+
+    apic_acpi_header := cast(*Madt_Acpi_Table) acpi_get_table_by_signature("APIC");
+    assert(apic_acpi_header.local_apic_address == 0xfee0_000);
+
+    using Page_Flags;
+    uncacheable_flags := READ_WRITE | PRESENT | CACHE_DISABLE;
+    apic = map_memory(0x1000, physical_address = apic_acpi_header.local_apic_address, flags = uncacheable_flags);
+
+    MSR_APIC_BASE :: 0x1b;
+
+    #asm {
+        mov msr_name: gpr === c, MSR_APIC_BASE;
+        rdmsr high:, low:, msr_name;
+        or low, 0x800;
+        wrmsr high, low, msr_name;
+    }
 }
 
 
@@ -1153,7 +1177,7 @@ Hpet_Acpi_Table :: struct {
     flags: u8;
     vendor: u16 #align 1;
     address_space: enum u8 { MAIN_MEMORY :: 0; IO :: 1; };
-    some_stuff: [3] u8;
+    stuff: [3] u8;
     base_address: u64 #align 1;
 }
 
@@ -1162,6 +1186,13 @@ Hpet_Register :: enum u64 {
     CONFIG       :: 0x10;
     STATUS       :: 0x20;
     COUNTER      :: 0xf0;
+
+    TIMER0       :: 0x100;
+    TIMER0_COMP  :: 0x108;
+    TIMER1       :: 0x120;
+    TIMER1_COMP  :: 0x128;
+    TIMER2       :: 0x140;
+    TIMER2_COMP  :: 0x148;
 }
 
 write :: (reg: Hpet_Register, value: u64) {
@@ -1184,11 +1215,18 @@ hpet_init :: () {
     acpi_table := cast(*Hpet_Acpi_Table) hpet_acpi_header;
     assert(acpi_table.address_space == .MAIN_MEMORY);
 
-    virt := map_memory(0x1000, physical_address = acpi_table.base_address);
+    using Page_Flags;
+    uncacheable_flags := READ_WRITE | PRESENT | CACHE_DISABLE;
+    virt := map_memory(0x1000, physical_address = acpi_table.base_address, flags = uncacheable_flags);
+
     offset_in_page := acpi_table.base_address % 0x1000;
     hpet.base_address = xx (virt + offset_in_page);
 
     capabilities := read(Hpet_Register.CAPABILITIES);
+
+    COUNT_SIZE_CAP :: 0x2000;
+    assert(capabilities & COUNT_SIZE_CAP > 0, "HPET does not support 64bit mode");
+
     hpet.base_period_femtoseconds = capabilities >> 32;
     assert(hpet.base_period_femtoseconds > 0 && hpet.base_period_femtoseconds < 100_000_000);
 
@@ -1235,6 +1273,7 @@ Page_Flags :: enum_flags u64 {
 
 VIRTUAL_MIRROR   : u64 : 0xffff_ffff_c000_0000;
 KERNEL_BASE      : u64 : 0xffff_ffff_8000_0000;
+HEAP_BASE        : u64 : 0xffff_ffff_80c0_0000;
 //                       0x0000_ffff_ffff_ffff;
 
 to_virtual :: (phys: u64) -> *u64 {
@@ -1251,7 +1290,7 @@ ONE_GB : u64 : 0x4000_0000;
 
 page_table_init :: () {
     using Page_Flags;
-    heap_virtual_page_watermark = 0xffff_ffff_80c0_0000 / 0x1000;
+    heap_virtual_page_watermark = cast(int) (HEAP_BASE / 0x1000);
 
     pml4[0x1ff] = to_physical(pdpt.data)      | xx PRESENT | READ_WRITE;
     pdpt[0x1ff] = to_physical(mirror_pd.data) | xx PRESENT | READ_WRITE;
@@ -1615,6 +1654,8 @@ get_new_page_frame :: () -> u64 {
     last_gotted_page_frame = address;
 
     available_memory -= 0x1000;
+    if current_task  current_task.used_memory += 0x1000;
+
     memset(xx (address + VIRTUAL_MIRROR), 0, 0x1000);
     return address;
 }
@@ -1636,7 +1677,10 @@ get_contiguous_page_frames :: (page_count: int) -> u64 {
             for bit - page_count..bit - 1 {
                 set_bit(*pm_bitmap, xx it);
             }
+
             available_memory -= page_count * 0x1000;
+            if current_task  current_task.used_memory += page_count * 0x1000;
+
             return cast(u64) (bit - contiguous_bits_found) * 0x1000;
         }
     }
@@ -1653,6 +1697,8 @@ release_page_frame :: (address: u64) {
     if bit < lowest_free_bit {
         lowest_free_bit = bit;
     }
+
+    if current_task  current_task.used_memory -= 0x1000;
 }
 
 create_address_space :: () -> u64 {
@@ -1672,14 +1718,14 @@ parameters_base_address: *void;
 
 load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     if file.count < size_of(Formosa_Exe_Header) {
-        printf("File is not an executable");
+        printf("File is not an executable\n");
         return null;
     }
 
     header := cast(*Formosa_Exe_Header) file.data;
 
     if header.magic != FORMOSA_EXE_MAGIC {
-        printf("File is not an executable");
+        printf("File is not an executable\n");
         return null;
     }
 
@@ -1709,12 +1755,12 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     memcpy(type_table.data, file.data + header.type_table_offset, table_size);
 
     if parameters.count < type_table.count {
-        printf("There are not enough parameters provided for the program! Wanted %, got %.\n", type_table.count, parameters.count);
+        printf("There are not enough parameters provided for the program! Wanted %, got %.\n\n", type_table.count, parameters.count);
         return null;
     }
 
     if parameters.count > type_table.count {
-        printf("There are too many parameters provided for the program! Wanted %, got %.\n", type_table.count, parameters.count);
+        printf("There are too many parameters provided for the program! Wanted %, got %.\n\n", type_table.count, parameters.count);
         return null;
     }
 
@@ -1725,7 +1771,7 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     cursor: int;
     for type_table {
         if parameters[it_index].type.type != it.type {
-            printf("Parameter % is of the wrong type!\nWanted %, got %.\n", it_index + 1, it.type, parameters[it_index].type.type);
+            printf("Parameter % is of the wrong type!\nWanted %, got %.\n\n", it_index + 1, it.type, parameters[it_index].type.type);
             return null;
         }
 
@@ -1859,6 +1905,7 @@ Syscall_Numbers :: enum {
     GET_WINDOW_BUFFER       :: 0x19;
     GET_MOUSE_POSITION      :: 0x20;
     GET_WINDOW_SIZE         :: 0x21;
+    SLEEP                   :: 0x22;
 }
 
 #program_export
@@ -1962,7 +2009,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 watermark: int;
             }
 
-            allocator_data.space = map_memory(0x10_0000);
+            allocator_data.space = map_memory(0x1_0000);
             context.allocator.proc = (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: *void, user_data: *void) -> *void {
                 if mode != .ALLOCATE return null;
 
@@ -2114,6 +2161,17 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
 
           case EXIT;
             exit();
+
+          case SLEEP;
+            until: Apollo_Time;
+            until.high = cast(s64) data.rbx;
+            until.low = data.rcx;
+
+            until += get_system_time();
+
+            current_task.sleep_until = until;
+            current_task.state = .SLEEPING;
+            yield();
 
           case GET_MOUSE_POSITION;
             w := cast(Window_Handle) data.rdx;

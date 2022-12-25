@@ -1,4 +1,103 @@
 
+
+
+Kernel_Command :: struct {
+    name: string;
+    procedure: (args: .. Any) -> Any;
+    types: [] Type;
+}
+
+kernel_commands :: Kernel_Command.[
+    .{ "memory_usage", cmd_get_memory_usage, .[] },
+    .{ "tasks", cmd_list_tasks, .[] },
+    .{ "windows", cmd_list_windows, .[] },
+];
+
+cmd_get_memory_usage :: (args: .. Any) -> Any {
+    Result_Type :: struct {
+        total: int; @Formosa.bytes
+        available: int; @Formosa.bytes
+        heap_used: int; @Formosa.bytes
+    };
+
+    mem := New([] Result_Type);
+    mem.count = 1;
+    mem.data = New(Result_Type);
+
+    mem[0][0] = Result_Type.{
+        total_memory,
+        available_memory,
+        cast(int) (cast(u64) heap_virtual_page_watermark * 0x1000 - HEAP_BASE),
+    };
+
+    return << mem;
+}
+
+cmd_list_tasks :: (args: ..Any) -> Any {
+    task := *the_first_task;
+
+    Task_Status :: struct {
+        name: string;
+        state: type_of(Task_Info.state);
+        memory: int; @Formosa.bytes
+        wall_time: Apollo_Time; @Formosa.apolloConcise
+        cpu_time: Apollo_Time; @Formosa.apolloConcise
+    }
+
+    task_list := New([..] Task_Status);
+
+    while true {
+        new := array_add(task_list);
+        new.name = task.parent_process.name;
+        new.state = task.state;
+        new.memory = task.used_memory;
+        new.wall_time = get_system_time() - task.start_time;
+        new.cpu_time = task.cpu_time;
+
+        if task == idle_task break;
+        if task.next == *the_first_task task = idle_task;
+
+        else task = task.next;
+    }
+
+    return << task_list;
+}
+
+cmd_list_windows :: (args: .. Any) -> Any {
+    Window_Status :: struct {
+        process: string;
+        xpos, ypos: int;
+        width, height: int;
+    }
+
+    window_list := New([..] Window_Status);
+
+    for windows if it.exists {
+        new := array_add(window_list);
+        new.process = it.owner.parent_process.name;
+        new.xpos = it.blitter.draw.x;
+        new.ypos = it.blitter.draw.y;
+        new.width = it.blitter.draw.width;
+        new.height = it.blitter.draw.height;
+    }
+
+    return << window_list;
+}
+
+Kernel_Command_Startup_Data :: struct {
+    procedure: (args: .. Any) -> Any;
+    args: [] Any;
+}
+
+kernel_command_launcher_task :: (data: *void) {
+    command := cast(*Kernel_Command_Startup_Data) data;
+    result := command.procedure(.. command.args);
+
+    current_task.parent_process.output_data = result;
+}
+
+
+
 handle_keyboard_events :: () {
     while true {
         event, success := read_event_buffer(*input_key_buffer);
@@ -190,7 +289,7 @@ shell_handle_mouse :: () {
         event := read_event_buffer(*the_first_task.parent_process.mouse_events);
         if event.event == .NONE break;
 
-        if event.event == .BUTTON_1_PRESSED {
+        if event.event == .BUTTON_1_PRESSED && shell.flag_held {
             shell.lmb_held = true;
 
             x := mouse.position_x;
@@ -254,6 +353,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
 
             else if key_code == .FLAG {
                 shell.flag_held = false;
+                shell.dragging = INVALID_WINDOW_HANDLE;
             }
         }
 
@@ -594,35 +694,51 @@ shell_update_command_lists :: () {
 }
 
 shell_load_program :: (step: Command_Step) -> *Task_Info {
-    exe := read_file(tprint("programs/%", step.name));
-    defer unmap_memory(exe.count, xx exe.data);
+    kernel_command: *Kernel_Command;
 
-    if !exe.count {
-        printf("Command not found: \"%\"!\n\n", step.name);
-        return null;
+    for* kernel_commands {
+        if step.name == it.name {
+            kernel_command = it;
+            break;
+        }
     }
-
-    header := cast(*Formosa_Exe_Header) exe.data;
-
-    use_type_table := header.type_table_size && (header.type == .ELF);
-
-    if use_type_table map_memory(header.type_table_size, cast(u64) header.type_table_virtual_address);
-    defer if use_type_table unmap_memory(header.type_table_size, cast(u64) header.type_table_virtual_address);
-
-    if !step.parameters.count {
-        task := load_program(exe);
-        task.parent_process.name = copy_string(step.name);
-        return task;
-    }
-
-    args := NewArray(32, Any);
 
     type_table: [] *Type_Info;
-    type_table.count = header.input_parameter_count;
-    type_table.data = xx header.type_table_virtual_address;
 
-    table_size := header.elf_offset - size_of(Formosa_Exe_Header);
-    memcpy(type_table.data, exe.data + header.type_table_offset, table_size);
+    type_table_allocated: bool;
+    allocated_size: int;
+    defer if type_table_allocated  unmap_memory(allocated_size, cast(u64) type_table.data);
+
+    exe: [] u8;
+    defer unmap_memory(exe.count, xx exe.data);
+    if kernel_command == null {
+        exe = read_file(tprint("programs/%", step.name));
+
+        if !exe.count {
+            printf("Command not found: \"%\"!\n\n", step.name);
+            return null;
+        }
+        header := cast(*Formosa_Exe_Header) exe.data;
+
+        use_type_table := header.type_table_size && (header.type == .ELF);
+
+        if use_type_table {
+            map_memory(header.type_table_size, cast(u64) header.type_table_virtual_address);
+            //        defer if use_type_table unmap_memory(header.type_table_size, cast(u64) header.type_table_virtual_address);
+            type_table_allocated = true;
+            allocated_size = header.type_table_size;
+
+            type_table.count = header.input_parameter_count;
+            type_table.data = xx header.type_table_virtual_address;
+
+            table_size := header.elf_offset - size_of(Formosa_Exe_Header);
+            memcpy(type_table.data, exe.data + header.type_table_offset, table_size);
+        }
+    } else {
+        type_table = xx kernel_command.types;
+    }
+
+    args := NewArray(step.parameters.count, Any);
 
     for * step.parameters {
         if it.type == .IDENT {
@@ -645,7 +761,6 @@ shell_load_program :: (step: Command_Step) -> *Task_Info {
             } else {
                 args[it_index] = it.value._string;
             }
-
         }
 
         else if it.type == .STRING args[it_index] = it.value._string;
@@ -654,14 +769,20 @@ shell_load_program :: (step: Command_Step) -> *Task_Info {
         else assert(false);
     }
 
-    the_args: [] Any;
-    the_args.count = step.parameters.count;
-    the_args.data = args.data;
+    if kernel_command == null {
+        task := load_program(exe, .. args);
+        if task task.parent_process.name = copy_string(step.name);
+        return task;
+    }
 
-    task := load_program(exe, .. the_args);
-    task.parent_process.name = copy_string(step.name);
+    else {
+        data := map_memory(size_of(Kernel_Command_Startup_Data));
+        << cast(*Kernel_Command_Startup_Data) data = .{ kernel_command.procedure, args };
+        task := make_task(kernel_command_launcher_task, data);
+        task.parent_process.name = kernel_command.name;
+        return task;
+    }
 
-    return task;
 }
 
 shell_handle_text_command :: (command_string: string) -> bool {
@@ -779,7 +900,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
                 break;
             }
 
-            element := Basic.array_add(*parameters);
+            element := array_add(*parameters);
             element.token_or_null = *tokens[index];
             if tok.type == .INT {
                 element.type = .INT;
@@ -856,7 +977,7 @@ tokenize_command :: (command: string) -> [..] Token {
 
     start: int;
     Emit :: (type: Token.Type, _string := "", _int := 0) -> *Token #expand {
-        token := Basic.array_add(*result);
+        token := array_add(*result);
         token.type = type;
 
         if _int    != 0  token._int = _int;
@@ -949,25 +1070,63 @@ tokenize_command :: (command: string) -> [..] Token {
     return result;
 }
 
-represent_apollo_delta :: (time: Basic.Apollo_Time) -> string {
-    s, success := Basic.to_seconds(time);
+represent_apollo_delta :: (time: Apollo_Time) -> string {
+    s, success := to_seconds(time);
     assert(success);
-    if s < 60  return Basic.tprint("% second%", s, ifx s == 1 then "" else "s");
+    if s < 60  return tprint("% second%", s, ifx s == 1 then "" else "s");
 
     m := s / 60;
-    if m < 60  return Basic.tprint("% minute%", m, ifx m == 1 then "" else "s");
+    if m < 60  return tprint("% minute%", m, ifx m == 1 then "" else "s");
 
     h := m / 60;
-    if h < 24  return Basic.tprint("% hour%", h, ifx h == 1 then "" else "s");
+    if h < 24  return tprint("% hour%", h, ifx h == 1 then "" else "s");
     
     d := h / 24;
-    if d < 30  return Basic.tprint("% day%", d, ifx d == 1 then "" else "s");
+    if d < 30  return tprint("% day%", d, ifx d == 1 then "" else "s");
     
     m = d / 30;
-    if m < 12  return Basic.tprint("% month%", m, ifx m == 1 then "" else "s");
+    if m < 12  return tprint("% month%", m, ifx m == 1 then "" else "s");
 
     y := m / 12;
-    return Basic.tprint("% year%", y, ifx y == 1 then "" else "s");
+    return tprint("% year%", y, ifx y == 1 then "" else "s");
+}
+
+represent_apollo_delta_concise :: (time: Apollo_Time) -> string {
+    milliseconds, success := to_milliseconds(time);
+    assert(success);
+
+    seconds      := milliseconds / 1000;
+    minutes      := seconds      / 60;
+    hours        := minutes      / 60;
+    days         := hours        / 24;
+
+    milliseconds -= seconds      * 1000;
+    seconds      -= minutes      * 60;
+    minutes      -= hours        * 60;
+    hours        -= days         * 24;
+
+    context.print_style.default_format_int.minimum_digits = 2;
+    defer context.print_style.default_format_int.minimum_digits = 1;
+
+    result := tprint("%s", seconds);
+    if minutes > 0 result = join(tprint("%m ", minutes), result);
+    if hours > 0 result = join(tprint("%h ", hours), result);
+    if days > 0 result = join(tprint("%d ", days), result);
+
+    return result;
+}
+
+represent_bytes :: (bytes: u64) -> string {
+    if bytes < 1024 return tprint("% b", formatInt(bytes, digits_per_comma = 3, comma_string = ","));
+
+    kb := bytes / 1024;
+    return tprint("% kb", formatInt(kb, digits_per_comma = 3, comma_string = ","));
+
+    // mb := kb / 1024;
+    // if mb < 1024 return tprint("% mb", mb);
+    // 
+    // gb := mb / 1024;
+    // return tprint("% gb", gb);
 }
 
 print_ipc_data :: (value: Any) {
@@ -981,7 +1140,7 @@ print_ipc_data :: (value: Any) {
         if !array.count return;
 
         if tia.element_type.type == .STRUCT {
-            widths := Basic.NewArray(array.count, int);
+            widths := NewArray(array.count, int);
             tis := cast(*Type_Info_Struct) tia.element_type;
 
             // Calculate widths:
@@ -995,23 +1154,51 @@ print_ipc_data :: (value: Any) {
                     thing.value_pointer = array.data + it.offset_in_bytes + index * tia.element_type.runtime_size;
                     thing.type = it.type;
 
-                    length: int;
-                    apollo: bool;
+                    length: int = -1;
 
                     context.print_style.default_format_int.base = 10;
-                    for it.notes {
-                        if it == "Formosa.apollo" {
-                            time: *Basic.Apollo_Time = xx thing.value_pointer;
-                            length = represent_apollo_delta(Basic.operator-(get_system_time(), << time)).count;
-                            apollo = true;
+                    for note: it.notes {
+                        if starts_with(note, "Formosa.cond") {
+                            condition: string;
+                            condition.data = note.data + "Formosa.cond(".count;
+                            condition.count = note.count - "Formosa.cond(".count - 1;
+
+                            success, member_name, value := split_from_left(condition, #char "=");
+                            assert(success, "you gotta");
+
+                            for member: tis.members {
+                                if member.name == member_name {
+                                    any: Any;
+                                    any.type = member.type;
+                                    any.value_pointer = array.data + member.offset_in_bytes + index * tia.element_type.runtime_size;
+                                    if tprint("%", any) != tprint("%", value) {
+                                        length = 0;
+                                        break note;
+                                    }
+                                }
+                            }
                         }
 
-                        if it == "Formosa.base16" {
+                        else if note == {
+                          case "Formosa.apollo";
+                            time := << cast(*Apollo_Time) thing.value_pointer;
+                            now := get_system_time();
+                            length = represent_apollo_delta(now - time).count;
+
+                          case "Formosa.apolloConcise";
+                            time := << cast(*Apollo_Time) thing.value_pointer;
+                            length = represent_apollo_delta_concise(time).count;
+
+                          case "Formosa.base16";
                             context.print_style.default_format_int.base = 16;
+
+                          case "Formosa.bytes";
+                            assert(it.type.runtime_size == 8);
+                            length = represent_bytes(<< cast(*u64) thing.value_pointer).count;
                         }
                     }
 
-                    if !apollo length = Basic.tprint("%", thing).count;
+                    if length == -1 length = tprint("%", thing).count;
                     if length > widths[it_index]  widths[it_index] = length;
                     context.print_style.default_format_int.base = 10;
                 }
@@ -1036,33 +1223,76 @@ print_ipc_data :: (value: Any) {
             for index: 0..array.count - 1 {
                 print("|");
                 printf(" % ", index, color = theme.highlight);
+
                 if array.count >= 10 && index < 10 print(" ");
-                for tis.members {
+
+                for it, column: tis.members {
                     thing: Any;
                     thing.value_pointer = array.data + it.offset_in_bytes + index * tia.element_type.runtime_size;
                     thing.type = it.type;
 
                     print("| ");
 
-                    apollo: bool;
+                    handled: bool;
                     to_print: string;
                     context.print_style.default_format_int.base = 10;
-                    for it.notes {
-                        if it == "Formosa.base16" {
-                            context.print_style.default_format_int.base = 16;
+
+                    for note: it.notes {
+                        if starts_with(note, "Formosa.cond") {
+                            condition: string;
+                            condition.data = note.data + "Formosa.cond(".count;
+                            condition.count = note.count - "Formosa.cond(".count - 1;
+
+                            success, member_name, value := split_from_left(condition, #char "=");
+                            assert(success, "you gotta");
+
+                            for member: tis.members {
+                                if member.name == member_name {
+                                    any: Any;
+                                    any.type = member.type;
+                                    any.value_pointer = array.data + member.offset_in_bytes + index * tia.element_type.runtime_size;
+                                    if tprint("%", any) != tprint("%", value) {
+                                        handled = true;
+                                        for 0..widths[column] - 1 print(" ");
+                                        to_print = "";
+                                        break note;
+                                    }
+                                }
+                            }
                         }
 
-                        if it == "Formosa.apollo" {
-                            time: *Basic.Apollo_Time = xx thing.value_pointer;
-                            to_print = represent_apollo_delta(Basic.operator-(get_system_time(), << time));
-                            apollo = true;
+                        else if note == {
+                          case "Formosa.apollo";
+                            time: *Apollo_Time = xx thing.value_pointer;
+                            to_print = represent_apollo_delta(operator-(get_system_time(), << time));
+                            for 0..widths[column] - to_print.count - 1 print(" ");
+                            handled = true;
+
+                          case "Formosa.apolloConcise";
+                            time := << cast(*Apollo_Time) thing.value_pointer;
+                            to_print = represent_apollo_delta_concise(time);
+                            for 0..widths[column] - to_print.count - 1 print(" ");
+                            handled = true;
+
+                          case "Formosa.base16";
+                            context.print_style.default_format_int.base = 16;
+
+                          case "Formosa.bytes";
+                            assert(it.type.runtime_size == 8);
+                            to_print = represent_bytes(<< cast(*u64) thing.value_pointer);
+                            for 0..widths[column] - to_print.count - 1 print(" ");
+                            handled = true;
                         }
                     }
 
-                    if !apollo to_print = Basic.tprint("%", thing);
+                    if !handled to_print = tprint("%", thing);
                     print(to_print);
 
-                    for 0..widths[it_index] - to_print.count print(" ");
+                    print(" ");
+                    if !handled {
+                        for 0..widths[column] - to_print.count - 1 print(" ");
+                    }
+
                     context.print_style.default_format_int.base = 10;
                 }
                 print("|\n");

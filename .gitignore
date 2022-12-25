@@ -74,3 +74,5 @@ filesystem/OpenSans-BoldItalic.ttf
 freetype-2.12.1.tar.gz
 freetype-2.12.1/*
 filesystem/programs/create_many_files
+filesystem/programs/sleep_test
+filesystem/programs/cpu_time_test

@@ -58,103 +58,107 @@ main :: (filename: string) {
     control: bool;
 
     while true {
-        message := get_message();
+        message := wait_for_message();
 
-        if message.kind == .KEYBOARD {
-            code := message.keyboard.key;
+        while message.kind != .NONE {
+            if message.kind == .KEYBOARD {
+                code := message.keyboard.key;
 
-            if message.keyboard.type == .RELEASED {
-                if code == .SHIFT || code == .RIGHT_SHIFT {
-                    shifted = false;
+                if message.keyboard.type == .RELEASED {
+                    if code == .SHIFT || code == .RIGHT_SHIFT {
+                        shifted = false;
+                    }
+
+                    if code == .CTRL {
+                        control = false;
+                    }
                 }
 
-                if code == .CTRL {
-                    control = false;
+                else if code == .ESCAPE {
+                    return;
+                }
+
+                else if code == .SHIFT || code == .RIGHT_SHIFT {
+                    shifted = true;
+                }
+
+                else if code == .CTRL {
+                    control = true;
+                }
+
+                else if code == .ARROW_LEFT {
+                    if cursor_pos > 0 cursor_pos -= 1;
+                    repaint_needed = true;
+                }
+
+                else if code == .ARROW_RIGHT {
+                    if cursor_pos < used cursor_pos += 1;
+                    repaint_needed = true;
+                }
+
+                else if code == .ENTER {
+                    for < used .. cursor_pos {
+                        buffer[it] = buffer[it - 1];
+                    }
+
+                    buffer[cursor_pos] = #char "\n";
+                    used += 1;
+                    cursor_pos += 1;
+                    repaint_needed = true;
+                    all = true;
+                }
+
+                else if code == .DELETE {
+                    if cursor_pos == used continue;
+                    for cursor_pos..used - 1 {
+                        buffer[it] = buffer[it + 1];
+                    }
+
+                    if used > 0 used -= 1;
+                    repaint_needed = true;
+                    all = true;
+                }
+
+                else if code == .BACKSPACE {
+                    if cursor_pos == 0 continue;
+                    for cursor_pos - 1..used - 1 {
+                        buffer[it] = buffer[it + 1];
+                    }
+
+                    if used > 0 used -= 1;
+                    if cursor_pos > 0 cursor_pos -= 1;
+                    repaint_needed = true;
+                    all = true;
+                }
+
+                else if !control {
+                    char := key_code_to_ascii(code, shifted);
+                    if char == 0 continue;
+
+                    for < used..cursor_pos {
+                        buffer[it] = buffer[it - 1];
+                    }
+
+                    buffer[cursor_pos] = char;
+                    used += 1;
+                    cursor_pos += 1;
+                    repaint_needed = true;
+                } else {
+                    if code == #char "S" && filename.count {
+                        contents: [] u8;
+                        contents.data = buffer;
+                        contents.count = used;
+                        create_file(filename);
+                        write_file(filename, contents);
+                        write_string("Saving file!\n");
+                    }
                 }
             }
 
-            else if code == .ESCAPE {
-                return;
-            }
-
-            else if code == .SHIFT || code == .RIGHT_SHIFT {
-                shifted = true;
-            }
-
-            else if code == .CTRL {
-                control = true;
-            }
-
-            else if code == .ARROW_LEFT {
-                if cursor_pos > 0 cursor_pos -= 1;
-                repaint_needed = true;
-            }
-
-            else if code == .ARROW_RIGHT {
-                if cursor_pos < used cursor_pos += 1;
-                repaint_needed = true;
-            }
-
-            else if code == .ENTER {
-                for < used .. cursor_pos {
-                    buffer[it] = buffer[it - 1];
-                }
-
-                buffer[cursor_pos] = #char "\n";
-                used += 1;
-                cursor_pos += 1;
-                repaint_needed = true;
-                all = true;
-            }
-
-            else if code == .DELETE {
-                if cursor_pos == used continue;
-                for cursor_pos..used - 1 {
-                    buffer[it] = buffer[it + 1];
-                }
-
-                if used > 0 used -= 1;
-                repaint_needed = true;
-                all = true;
-            }
-
-            else if code == .BACKSPACE {
-                if cursor_pos == 0 continue;
-                for cursor_pos - 1..used - 1 {
-                    buffer[it] = buffer[it + 1];
-                }
-
-                if used > 0 used -= 1;
-                if cursor_pos > 0 cursor_pos -= 1;
-                repaint_needed = true;
-                all = true;
-            }
-
-            else if !control {
-                char := key_code_to_ascii(code, shifted);
-                if char == 0 continue;
-
-                for < used..cursor_pos {
-                    buffer[it] = buffer[it - 1];
-                }
-
-                buffer[cursor_pos] = char;
-                used += 1;
-                cursor_pos += 1;
-                repaint_needed = true;
-            } else {
-                if code == #char "S" && filename.count {
-                    contents: [] u8;
-                    contents.data = buffer;
-                    contents.count = used;
-                    create_file(filename);
-                    write_file(filename, contents);
-                    write_string("Saving file!\n");
-                }
-            }
+            message = get_message();
         }
 
-        if message.kind == .NONE && repaint_needed {
+        if repaint_needed {
             render_text(all);
             repaint();
             repaint_needed = false;

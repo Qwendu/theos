@@ -11,6 +11,8 @@ main :: (file_name: string) {
         return;
     }
 
+    defer unmap_memory(image_file.count, image_file.data);
+
     extension: string;
     if file_name.count > 4 {
         extension.count = 4;

@@ -17,14 +17,8 @@ _formosa_start :: () #no_context {
 END;
 
 build_formosa_app :: (name: string, optimize: bool = false) {
-/*    set_build_options_dc(.{do_output = false});
-
-    user_args, compiler_args := get_build_options().compile_time_command_line;
-    if !user_args.count assert(false);
-    name := user_args[0];
-*/
-
     program_parameters: [..] *Code_Declaration;
+
     print("\n=== Compiling User Application \"%\" ===\n", name);
     {
         w := compiler_create_workspace("Formosa User Application");
@@ -35,7 +29,7 @@ build_formosa_app :: (name: string, optimize: bool = false) {
         options.output_type = .EXECUTABLE;
         options.entry_point_name = "_formosa_start";
 
-        #if !ENABLE_IST options.disable_redzone = true;
+        options.disable_redzone = true;
 
         // if optimize set_optimization_level(*options, 3, 3);
 

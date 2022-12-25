@@ -469,7 +469,8 @@ read_file :: (path: string) -> [] u8, Filesystem_Result {
 File_Status :: struct {
     name: string;
     type: enum { DIR; FILE; }
-    file_size_or_entry_count_if_directory: int;
+    file_size: int;
+    directory_entry_count: int;
     created: Apollo_Time;
     modified: Apollo_Time;
 }
@@ -514,10 +515,14 @@ list_directory :: (path: string) -> [] File_Status, Filesystem_Result {
             status.name = copy_string(name);
             status.modified = node.modified;
             status.created = node.created;
-            status.file_size_or_entry_count_if_directory = node.file_size;
 
-            if node.flags & .DIRECTORY  status.type = .DIR;
-            else status.type = .FILE;
+            if node.flags & .DIRECTORY {
+                status.type = .DIR;
+                status.directory_entry_count = node.directory_entry_count;
+            } else {
+                status.type = .FILE;
+                status.file_size = node.file_size;
+            }
         }
 
         directories_left -= Constants.directory_entries_per_block;
@@ -555,7 +560,7 @@ format_filesystem :: () -> bool {
     fs_bit_array.count = FS_BLOCKSIZE * 8;
 
     // Blocks:
-    // | Master | Bitmap | Root Directory entries | More root | Inodes | Inodes | Inodes | Inodes | Inodes | Inodes | Inodes | Inodes |
+    // | Master | Bitmap | Root directory entries | More root | Inodes | Inodes | Inodes | Inodes | Inodes | Inodes | Inodes | Inodes | ... Rest of the filesystem ...
 
     for 0..11 {
         set_bit(*fs_bit_array, it);

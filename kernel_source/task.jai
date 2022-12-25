@@ -14,6 +14,12 @@ Task_Info :: struct {
     entry: (data: *void);
     the_context: *Context;
 
+    used_memory: int;
+    start_time: Apollo_Time;
+    cpu_time: Apollo_Time;
+
+    sleep_until: Apollo_Time;
+
     state: enum {
         INVALID;
         AWAKE;
@@ -35,19 +41,37 @@ Task_Info :: struct {
 
 the_first_task: Task_Info;
 current_task: *Task_Info;
+idle_task: *Task_Info;
 
 initialize_task_manager :: () {
     task_switch :: () #c_call #foreign Interrupts;
     idt_add_handler(xx task_switch, 0x40);
 
-    the_first_task.next = *the_first_task;
     the_first_task.the_context = *context;
     the_first_task.state = .AWAKE;
     the_first_task.page_table = to_physical(pml4.data);
+    the_first_task.parent_process.name = "kernel";
+
     current_task = *the_first_task;
+
+    now := get_system_time();
+    the_first_task.start_time = now;
+    last_task_switch_timestamp = now;
+
+    idle_task = make_task(idle, stack_size = 0x400);
+    idle_task.parent_process.name = "idle";
+
+    the_first_task.next = *the_first_task;
+    idle_task.next = *the_first_task;
 }
 
+last_task_switch_timestamp: Apollo_Time;
+
 switch_to_task :: (new: *Task_Info) {
+    now := get_system_time();
+    current_task.cpu_time += now - last_task_switch_timestamp;
+    last_task_switch_timestamp = now;
+
     current := *current_task;
 
     tls := new.thread_storage;
@@ -93,6 +117,8 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
     task.startup_data = startup_data;
     task.state = .AWAKE;
 
+    task.start_time = get_system_time();
+
     cr3: u64;
     #asm { get_cr3 cr3; }
     task.page_table = cr3;
@@ -106,14 +132,26 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
 
 yield :: () {
     new := current_task.next;
-    while new.state != .AWAKE {
+    while true {
+        if new.state == .AWAKE {
+            switch_to_task(new);
+            return;
+        }
+
+        if new.state == .SLEEPING {
+            if get_system_time() >= new.sleep_until {
+                new.state = .AWAKE;
+                switch_to_task(new);
+                return;
+            }
+        }
+
         new = new.next;
         if new == current_task.next {
-            switch_to_task(*the_first_task);
+            switch_to_task(idle_task);
             return;
         }
     }
-    switch_to_task(new);
 }
 
 exit :: () {
@@ -141,6 +179,16 @@ exit :: () {
     }
 
     yield();
+}
+
+idle :: (data: *void) {
+    while true {
+        start := get_system_time();
+        while true {
+            if (get_system_time() - start) > milliseconds_to_apollo(1)  break;
+        }
+        yield();
+    }
 }
 
 #program_export
