@@ -166,12 +166,13 @@ kernel_entry :: () {
         startup := read_file("system/startup");
         commands := split(cast(string) startup, "\n");
 
-        // hpet_enable_interrupts(100);
+        hpet_enable_interrupts(100);
 
         for commands {
             shell_handle_text_command(it);
             update_shell();
-            yield();
+
+            kernel_sleep_millseconds(10);
         }
 
         paint_screen();
@@ -182,9 +183,9 @@ kernel_entry :: () {
             update_shell();
             move_mouse(mouse.position_x, mouse.position_y);
 
-            the_first_task.sleep_until = get_system_time() + milliseconds_to_apollo(10);
-            the_first_task.state = .SLEEPING;
-            yield();
+            clean_up_tasks();
+
+            kernel_sleep_millseconds(10);
         }
     }
 }
@@ -473,14 +474,12 @@ BochsBreak :: () #expand {
     }
 }
 
-sleep :: (ms: int) {
-    time := get_system_time();
-    while true {
-//        #asm { hlt; }
+kernel_sleep_millseconds :: (ms: int) {
+    assert(current_task == *the_first_task);
 
-        elapsed := operator-(get_system_time(), time);
-        if to_milliseconds(elapsed) > ms break;
-    }
+    the_first_task.sleep_until = get_system_time() + milliseconds_to_apollo(10);
+    the_first_task.state = .SLEEPING;
+    yield();
 }
 
 
@@ -1476,7 +1475,7 @@ map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PR
         print("The physical address is "); print_hex(physical_address); print("\n");
         assert(false);
         paint_screen();
-        sleep(1000);
+        kernel_sleep_millseconds(500);
     }
 
     pt[pt_offset] = physical_address | cast(u64) flags;

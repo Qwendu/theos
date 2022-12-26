@@ -25,6 +25,7 @@ Task_Info :: struct {
         AWAKE;
         WAITING_FOR_MESSAGE;
         SLEEPING;
+        EXITING;
         RETIRED;
     };
 
@@ -42,6 +43,8 @@ Task_Info :: struct {
 the_first_task: Task_Info;
 current_task: *Task_Info;
 idle_task: *Task_Info;
+
+retired_tasks: *Task_Info;
 
 initialize_task_manager :: () {
     task_switch :: () #c_call #foreign Interrupts;
@@ -169,11 +172,12 @@ exit :: () {
 
     for *windows if it.exists && it.owner == task  close_window(it_index);
 
-    stack_top := task.stack_bottom - task.stack_size;
-    // unmap_memory(task.stack_size, cast(u64) stack_top);
-    unmap_memory(task.thread_storage_size, cast(u64) task.thread_storage);
+    task.state = .EXITING;
 
-    task.state = .RETIRED;
+    retired := *retired_tasks;
+    while << retired && (<< retired).state == .EXITING retired = *(<< retired).next;
+    << retired = task;
+
     if shell.foreground_task == task {
         shell.foreground_task = *the_first_task;
     }
@@ -181,21 +185,45 @@ exit :: () {
     yield();
 }
 
+clean_up_tasks :: () {
+    retired := retired_tasks;
+    while retired && retired.state == .EXITING {
+        stack_top := retired.stack_bottom - retired.stack_size;
+        unmap_memory(retired.stack_size, cast(u64) stack_top);
+
+        if retired.thread_storage != null {
+            unmap_memory(retired.thread_storage_size, cast(u64) retired.thread_storage);
+        }
+
+        retired.state = .RETIRED;
+        retired = retired.next;
+    }
+
+    retired_tasks = null;
+}
+
 idle :: (data: *void) {
     while true {
-        start := get_system_time();
-        while true {
-            if (get_system_time() - start) > milliseconds_to_apollo(1)  break;
-        }
+        #asm { hlt; }
         yield();
     }
 }
 
 #program_export
 pit_interrupt :: (data: *Interrupt_Data) #c_call {
-    defer pic_end_of_interrupt(.PIT);
-}
+    pic_end_of_interrupt(.PIT);
 
+    if data.ip > KERNEL_BASE  return; // Hacky way to not preempt kernel code
+
+    kernel_context: Context;
+    kernel_context.allocator.proc = allocate_memory;
+    kernel_context.logger = log;
+    kernel_context.assertion_failed = assertion_failed;
+
+    push_context kernel_context {
+        yield();
+    }
+}
 
 
 

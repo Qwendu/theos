@@ -370,11 +370,11 @@ init_ide_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device
             }
 
             ide_write(*new, .DRIVE_SELECT, xx device_type);
-            sleep(1);
+            kernel_sleep_millseconds(5);
 
             // IDENTIFY, to determine if the drive exists
             ide_write(*new, .COMMAND, Ide_Command.IDENTIFY);
-            sleep(1);
+            kernel_sleep_millseconds(5);
 
             status := cast(Ide_Status) ide_read(*new, .STATUS);
             if status == .NONE continue; // A clear status register indicates there is no device here

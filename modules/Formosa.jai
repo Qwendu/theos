@@ -41,7 +41,7 @@ femtosleep :: (fs: u64) {
     sleep(time);
 }
 
-sleep :: (time: Apollo) {
+sleep :: (time: Apollo) #no_context {
     using Syscall_Numbers;
 
     low := time.low;
@@ -997,7 +997,6 @@ crt_pthread_mutex_lock :: (mutex: *void) -> s32 #c_call {
     return 0;
 }
 
-
 #program_export
 crt_write :: (fd: s32, buffer: *u8, count: u64) -> u64 #c_call {
     message: string;
@@ -1009,4 +1008,66 @@ crt_write :: (fd: s32, buffer: *u8, count: u64) -> u64 #c_call {
     }
 
     return count;
+}
+
+timespec :: struct {
+    tv_sec:  s64;
+    tv_nsec: s64;
+}
+
+#program_export
+nanosleep :: (ts: *timespec, rem: *timespec) -> s32 #c_call {
+    operator + :: (a: Apollo, b: Apollo) -> Apollo #no_context {
+        c: Apollo = ---;
+        p := *c; // We would like to not have to do this, but #asm doesn't let us put c yet.
+
+        #asm {
+            mov a_low:,  [a + 0];
+            mov a_high:, [a + 8];
+
+            mov b_low:,  [b + 0];
+            mov b_high:, [b + 8];
+
+            mov [p + 0], a_low;
+            mov [p + 8], a_high;
+
+            add [p + 0], b_low;
+            adc [p + 8], b_high;
+        }
+
+        return c;
+    }
+
+    ConvertToApollo :: (m: s64, FACTOR: s64) -> Apollo #expand {
+        result: Apollo = ---;
+        p := *result; // We would like to not have to do this, but #asm doesn't let us put 'result' yet.
+
+        #asm {
+            result_high: gpr === d;
+            result_low:  gpr === a;
+
+            mov result_low, FACTOR;
+            imul result_high, result_low, m;
+
+            mov [p + 0], result_low;
+            mov [p + 8], result_high;
+        }
+
+        `return result; // `;
+
+    }
+
+    timespec_to_apollo :: (ts: timespec) -> Apollo #no_context {
+        a_seconds     := ConvertToApollo(ts.tv_sec,  1_000_000_000_000_000);
+        a_nanoseconds := ConvertToApollo(ts.tv_nsec, 1_000_000);
+
+        apollo := a_seconds + a_nanoseconds + Apollo.{low=0xdbd87f0edb7c8000, high=0x300};
+        return apollo;
+    }
+
+    apollo := timespec_to_apollo(<< ts);
+    sleep(apollo);
+
+    if rem then << rem = .{};
+    return 0;
 }
