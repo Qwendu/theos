@@ -154,7 +154,7 @@ trivial_evaluation :: (using chess: *Chess, fifty: int) -> bool, int {
   }
 }
 
-nnue :: #foreign_library,no_dll "libnnueprobe";
+nnue :: #library,no_dll "libnnueprobe";
 __nnue_init :: (data: *u8, size: u64) #c_call #foreign nnue "nnue_init"; 
 __nnue_evaluate_incr :: (player: s32, pieces: *s32, squares: *s32, nnue_data: **NNUEdata) -> s32 #foreign nnue "nnue_evaluate_incremental";
 //__nnue_evaluate :: (player: s32, pieces: *s32, squares: *s32) -> s32 #foreign nnue "nnue_evaluate";

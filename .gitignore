@@ -76,3 +76,4 @@ freetype-2.12.1/*
 filesystem/programs/create_many_files
 filesystem/programs/sleep_test
 filesystem/programs/cpu_time_test
+userspace/modules_test.jai

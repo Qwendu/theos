@@ -184,6 +184,12 @@ build_formosa_app :: (name: string, optimize: bool = false) {
             .{source = "crt_clock_gettime", target = "clock_gettime"},
             .{source = "crt_fmod",    target = "fmod"},
             .{source = "crt_fmodf",   target = "fmodf"},
+            .{source = "crt_write",   target = "write"},
+            .{source = "crt_pthread_mutex_init",        target = "pthread_mutex_init"},
+            .{source = "crt_pthread_mutexattr_init",    target = "pthread_mutexattr_init"},
+            .{source = "crt_pthread_mutexattr_settype", target = "pthread_mutexattr_settype"},
+            .{source = "crt_pthread_mutex_lock",        target = "pthread_mutex_lock"},
+            .{source = "crt_pthread_mutex_unlock",      target = "pthread_mutex_unlock"},
         ];
 
         default := "plt_entry_%_must_be_patched";

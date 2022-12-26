@@ -1,5 +1,7 @@
 
 using,except .["get_system_time"] Basic :: #import "Basic";
+#poke_name Basic  write_string;
+
 #import "String";
 
 #import "Machine_X64";
@@ -163,6 +165,8 @@ kernel_entry :: () {
 
         startup := read_file("system/startup");
         commands := split(cast(string) startup, "\n");
+
+        // hpet_enable_interrupts(100);
 
         for commands {
             shell_handle_text_command(it);
@@ -736,6 +740,15 @@ Apic :: struct {
 
 apic: *Apic;
 
+Interrupt_Controller_Structure_Type :: enum u8 {
+    local_apic :: 0x0;
+    io_apic    :: 0x1;
+    interrupt_source_override :: 0x2;
+    nmi_source :: 0x3;
+    local_apic_nmi :: 0x4;
+    local_apic_address_override :: 0x5;
+}
+
 Madt_Acpi_Table :: struct {
     #as header: Acpi_Table_Header;
     local_apic_address: u32;
@@ -746,7 +759,20 @@ apic_init :: () {
     assert(check_feature(cpu.feature_leaves, .APIC), "CPU does not have a built-in local APIC");
 
     apic_acpi_header := cast(*Madt_Acpi_Table) acpi_get_table_by_signature("APIC");
-    assert(apic_acpi_header.local_apic_address == 0xfee0_000);
+
+    assert(apic_acpi_header != null);
+    assert(apic_acpi_header.local_apic_address == 0xfee0_0000);
+    assert(apic_acpi_header.header.length < 0x1000);
+
+    cursor := cast(u64) apic_acpi_header + size_of(Madt_Acpi_Table);
+
+    while cursor < cast(u64) apic_acpi_header + cast(u64) apic_acpi_header.header.length {
+        type := << cast(*Interrupt_Controller_Structure_Type) cursor;
+        cursor += 1;
+        size := << cast(*u8) cursor;
+        print("type: %, size: %\n", type, size);
+        cursor += size - 1;
+    }
 
     using Page_Flags;
     uncacheable_flags := READ_WRITE | PRESENT | CACHE_DISABLE;
@@ -1233,12 +1259,34 @@ hpet_init :: () {
     write(Hpet_Register.COUNTER, 0);
 
     ENABLE_CNF :: 1;
-    LEG_RT_CNF :: 2;
     write(.CONFIG, read(.CONFIG) | ENABLE_CNF);
 }
 
 hpet_get_ticks :: () -> u64 {
     return read(Hpet_Register.COUNTER);
+}
+
+hpet_enable_interrupts :: (freq: u64) {
+    LEG_RT_CNF :: 2;
+    write(.CONFIG, read(.CONFIG) | LEG_RT_CNF);
+
+    timer := read(.TIMER0);
+
+    Tn_PER_INT_CAP :: 0x10;
+    assert(timer & Tn_PER_INT_CAP > 0, "HPET timer 0 is not periodic capable");
+
+    Tn_SIZE_CAP :: 0x20;
+    assert(timer & Tn_SIZE_CAP > 0, "HPET timer 0 is not 64bit");
+
+    Tn_INT_ENB_CNF :: 0x4;
+    Tn_TYPE_CNF :: 0x8;
+    write(.TIMER0, timer | Tn_TYPE_CNF | Tn_INT_ENB_CNF);
+
+    ticks_per_second := cast(u64) 1_000_000_000_000_000 / hpet.base_period_femtoseconds;
+    ticks_per_interrupt := ticks_per_second / freq;
+
+    write(.TIMER0_COMP, ticks_per_interrupt);
+    pic_enable_irq(.PIT);
 }
 
 
@@ -1634,7 +1682,6 @@ available_memory: int;
 total_memory: int;
 
 lowest_free_bit: u64;
-last_gotted_page_frame: u64;
 
 get_new_page_frame :: () -> u64 {
     address: u64;
@@ -1650,8 +1697,6 @@ get_new_page_frame :: () -> u64 {
     }
 
     lowest_free_bit = bit + 1;
-
-    last_gotted_page_frame = address;
 
     available_memory -= 0x1000;
     if current_task  current_task.used_memory += 0x1000;
@@ -2504,7 +2549,7 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
     while true #asm { hlt; }
 }
 
-write_string :: (message: string) #no_context {
+write_string :: (message: string, to_standard_error := false) #no_context {
     kernel_context: Context;
     kernel_context.allocator.proc = allocate_memory;
     kernel_context.logger = log;

@@ -1,6 +1,5 @@
 
 #import "Formosa";
-#import "Formosa_Utilities";
 #import "Basic";
 
 main :: (left: string, right: string) {

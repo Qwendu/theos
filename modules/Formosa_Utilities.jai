@@ -1,120 +1,128 @@
 
 #scope_module
+
 #import "Formosa";
+#import "Basic";
 
 #scope_export
 
-Pnm :: struct {
-    width: int;
-    height: int;
-
-    type: enum {
-        UNINITIALIZED :: 0;
-        ASCII_BITMAP;
-        ASCII_GRAYMAP;
-        ASCII_PIXMAP;
-        BITMAP;
-        GRAYMAP;
-        PIXMAP;
-    }
-
-    data: *u8;
+conv :: (time: Apollo) -> Apollo_Time {
+    return << cast(*Apollo_Time) *time;
 }
 
-parse_pnm :: (file: [] u8) -> Pnm {
-    buffer := file.data;
-    // assert(buffer[0] == #char "P");
+conv :: (time: Apollo_Time) -> Apollo {
+    return << cast(*Apollo) *time;
+}
 
-    pnm: Pnm;
-    pnm.type = xx (buffer[1] - #char "0");
-    // assert(pnm.type == .GRAYMAP || pnm.type == .PIXMAP);
 
-    is_whitespace :: (char: u8) -> bool {
-        return char == 0x20
-            || char == 0x09
-            || char == 0x0a
-            || char == 0x0b
-            || char == 0x0c
-            || char == 0x0d
-            || char == #char "#";
+
+
+
+
+
+
+formosa_calendar_to_apollo :: (ct: Calendar_Time) -> Apollo_Time {
+    leap_year_count := leap_years_before(cast(s64) ct.year - 1) - leap_years_before(1970);
+    year_difference := cast(s64) ct.year - 1970;
+
+    seconds := 31536000 * (year_difference - leap_year_count);
+    seconds += 31622400 * leap_year_count;
+
+    for 0..ct.month_starting_at_0 - 1 {
+        days :: int.[
+            31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        ];
+
+        if it == days.count break;
+        seconds += 86400 * days[it];
     }
 
-    ConsumeWhitespaceAndComments :: () #expand {
-        while is_whitespace(buffer[`cursor]) {
-            if buffer[`cursor /*`*/] == #char "#" {
-                while buffer[`cursor /*`*/] != 0xa `cursor += 1; /*`*/
-            }
-            cursor += 1;
+    is_leap_year := (ct.year % 4 == 0) && (!(ct.year % 100 == 0) || (ct.year % 400 == 0));
+    if ct.month_starting_at_0 > 1 && is_leap_year {
+        seconds += 86400;
+    }
+
+    seconds += 86400 * cast(int) ct.day_of_month_starting_at_0;
+    seconds += cast(int) ct.hour * 60 * 60 + cast(int) ct.minute * 60 + cast(int) ct.second;
+
+    APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
+
+    apollo := seconds_to_apollo(seconds);
+    apollo += milliseconds_to_apollo(ct.millisecond);
+    apollo += APOLLO_TIME_FOR_JAN_1_1970;
+    return apollo;
+}
+
+formosa_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time { // This one is sometimes off by a day (authors brain is too small)
+    APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
+    milliseconds := to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);
+
+    seconds      := milliseconds / 1000;
+    minutes      := seconds      / 60;
+    hours        := minutes      / 60;
+    total_days   := hours        / 24;
+
+    milliseconds -= seconds      * 1000;
+    seconds      -= minutes      * 60;
+    minutes      -= hours        * 60;
+    hours        -= total_days   * 24;
+
+    years := total_days / 365;
+    leap_year_count := leap_years_before(years + 2);
+
+    years = (total_days - leap_year_count * 366) / 365;
+    years += leap_year_count;
+
+    days := total_days - (years - leap_year_count) * 365;
+    days -= leap_year_count * 366;
+
+    years += 1970;
+    is_leap_year := (years % 4 == 0) && (!(years % 100 == 0) || (years % 400 == 0));
+    if is_leap_year && days < 59 days += 1;
+
+    ct: Calendar_Time;
+
+    days_in_month := int.[
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ];
+
+    month: int;
+    for days_in_month {
+        month += 1;
+
+        if days >= it {
+            days -= it;
+        } else {
+            month = xx it_index;
+            break;
         }
     }
 
-    ParseInt :: () -> int #expand {
-        digit := buffer[`cursor /*`*/];
-        result: int;
+    ct.year = xx years;
+    // is_leap_year := (ct.year % 4 == 0) && (!(ct.year % 100 == 0) || (ct.year % 400 == 0));
+    // if is_leap_year && month < 2 month_day += 1;
 
-        while !is_whitespace(digit) {
-            // assert(digit >= #char "0" && digit <= #char "9");
-            result *= 10;
-            result += digit - #char "0";
-            `cursor += 1; /*`*/
-            digit = buffer[`cursor /*`*/];
-        }
-        return result;
-    }
+    ct.day_of_week_starting_at_0 = xx ((4 + total_days) % 7);
 
-    cursor := 2;
-    ConsumeWhitespaceAndComments();
-    pnm.width = ParseInt();
+    ct.month_starting_at_0 = xx month;
+    ct.day_of_month_starting_at_0 = xx days;
 
-    ConsumeWhitespaceAndComments();
-    pnm.height = ParseInt();
-
-    ConsumeWhitespaceAndComments();
-    max_value := ParseInt();
-    // assert(max_value == 255);
-
-    ConsumeWhitespaceAndComments();
-    pnm.data = buffer + cursor;
-
-    return pnm;
+    ct.hour = xx hours;
+    ct.minute = xx minutes;
+    ct.second = xx seconds;
+    ct.millisecond = xx milliseconds;
+    return ct;
 }
 
-scan_table         :: "\0#1234567890-=\0\tqwertyuiop[]\0\0asdfghjkl;'`\0\\zxcvbnm,./\0*\0 ";
-scan_table_shifted :: "\0#!@#$%^&*()_+\0\0QWERTYUIOP{}\0\0ASDFGHJKL:\"~\0|ZXCVBNM<>?\0*\0 ";
+#scope_module
 
-write_int :: (number: int) {
-    negative: bool;
-    buffer: [] u8;
-    buffer.count = 30;
-    buffer.data = map_memory(30);
-
-    _number := number;
-    if number < 0 _number *= -1;
-
-    for 0..buffer.count - 1 {
-        rem := _number % 10;
-        buffer[29 - it] =  #char "0" + cast(u8) rem;
-        _number /= 10;
-
-        if _number == 0 {
-            result: string = ---;
-            result.data = buffer.data + 29 - it;
-            result.count = it + 1;
-            write_string(result);
-            return;
-        }
+leap_years_before :: (year: s64) -> s64 {
+    floor_div :: (dividend: int, $ divisor: int) -> int {
+        offset := cast(int) (dividend <= 0 && dividend % divisor);
+        return dividend / divisor - offset;
     }
+
+    result := floor_div(year, 4) - floor_div(year, 100) + floor_div(year, 400);
+    return result;
 }
 
-write_hex :: (number: u16) {
-    result: [4] u8;
-
-    table := "0123456789abcdef";
-    for 0..3 {
-        index := number >> (it * 4);
-        index &= 0xf;
-
-        result[4 - it - 1] = table[index];
-    }
-    write_string(xx result);
-}

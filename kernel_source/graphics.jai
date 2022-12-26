@@ -1,4 +1,12 @@
 
+#if ENABLE_VESA {
+    #load "vesa.jai";
+} else {
+    #load "vga.jai";
+}
+
+
+
 Graphics :: struct {
     using screen: Surface;
     vesa_framebuffer: *u32;
@@ -632,14 +640,6 @@ Attribute :: struct {
     color: Color;
 }
 
-USE_VGA :: !ENABLE_VESA;
-
-#if ENABLE_VESA {
-    #load "vesa.jai";
-} else {
-    #load "vga.jai";
-}
-
 Pnm :: struct {
     width: int;
     height: int;
@@ -722,52 +722,4 @@ printf :: (format: string, args: .. Any) {
 printf :: (format: string, args: .. Any, color: Color) {
     result := Basic.tprint(format, .. args);
     print(result, color);
-}
-
-
-
-
-TITLE :: #string END
-   /##     /##                                                  
-  | ##    | ##                                                  
- /######  | #######   /######   /######   /#######              
-|_  ##_/  | ##__  ## /##__  ## /##__  ## /##_____/              
-  | ##    | ##  \ ##| ########| ##  \ ##|  ######               
-  | ## /##| ##  | ##| ##_____/| ##  | ## \____  ##              
-  |  ####/| ##  | ##|  #######|  ######/ /#######/              
-   \___/  |__/  |__/ \_______/ \______/ |_______/               
-END;
-
-
-welcome_screen :: () {
-    printf("\n%\n\n", TITLE, color = theme.primary);
-    print("Hello, sailor.\n");
-
-    calendar := cmos_get_calendar_time();
-    printf("The time is %.\n", Basic.calendar_to_string(calendar));
-
-    printf("There are % files in the root directory. Why am I telling you this?\n\n", filesystem_cache.master.root.directory_entry_count);
-
-    ti := type_info(x86_Feature_Flag);
-    print("Supported CPU features: -------------------------------------------", theme.foreground);
-    flags_on_this_line: int;
-    for 0..ti.names.count-1 {
-        if check_feature(cpu.feature_leaves, xx ti.values[it]) {
-            name := ti.names[it];
-            if name.count >= 8 continue;
-
-            if (flags_on_this_line % 7) == 0 print("\n");
-
-            print("| ", theme.foreground);
-            print(name, theme.highlight);
-            for 1..8 - name.count  print(" ");
-            flags_on_this_line += 1;
-        }
-    }
-    print("\n-------------------------------------------------------------------\n", theme.foreground);
-
-    print("Compiled using ", theme.primary);
-    printf("Jai %", COMPILER_VERSION, color = theme.accent);
-    print(".\n\n");
-    print_stack_trace();
 }

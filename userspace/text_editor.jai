@@ -1,7 +1,7 @@
 
 #import "Formosa";
-#import "Formosa_Utilities";
 #import "Basic";
+#import "Pnm";
 
 main :: (filename: string) {
     file: string;

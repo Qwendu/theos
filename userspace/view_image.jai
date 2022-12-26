@@ -1,6 +1,6 @@
 
 #import "Formosa";
-#import "Formosa_Utilities";
+#import "Pnm";
 
 main :: (file_name: string) {
     image_file := read_file(file_name);

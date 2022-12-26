@@ -971,3 +971,42 @@ crt_fmod :: (x: float64, y: float64) -> float64 #c_call {
 crt_fmodf :: (x: float, y: float) -> float #c_call {
     return x - cast(float) cast(int) (x / y) * y;
 }
+
+#program_export
+crt_pthread_mutex_init :: (mutex: *void, attr: *void) -> s32 #c_call {
+    return 0;
+}
+
+#program_export
+crt_pthread_mutexattr_init :: (attr: *void) -> s32 #c_call {
+    return 0;
+}
+
+#program_export
+crt_pthread_mutexattr_settype :: (attr: *void, type: s32) -> s32 #c_call {
+    return 0;
+}
+
+#program_export
+crt_pthread_mutex_unlock :: (mutex: *void) -> s32 #c_call {
+    return 0;
+}
+
+#program_export
+crt_pthread_mutex_lock :: (mutex: *void) -> s32 #c_call {
+    return 0;
+}
+
+
+#program_export
+crt_write :: (fd: s32, buffer: *u8, count: u64) -> u64 #c_call {
+    message: string;
+    message.count = cast(int) count;
+    message.data = buffer;
+
+    if fd == 0 || fd == 1 {
+        write_string(message);
+    }
+
+    return count;
+}
