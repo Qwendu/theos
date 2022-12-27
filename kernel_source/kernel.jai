@@ -113,6 +113,8 @@ kernel_entry :: () {
 
         initialize_task_manager();
 
+        hpet_enable_interrupts(100);
+
         pci_scan_all_devices();
         discover_mass_storage_devices();
 
@@ -165,8 +167,6 @@ kernel_entry :: () {
 
         startup := read_file("system/startup");
         commands := split(cast(string) startup, "\n");
-
-        hpet_enable_interrupts(100);
 
         for commands {
             shell_handle_text_command(it);
@@ -921,6 +921,14 @@ cmos_get_calendar_time :: () -> Calendar_Time {
     return cal;
 }
 
+#program_export
+cmos_interrupt :: () #c_call {
+    cmos_read(.STATUS_REG_C);
+    pic_end_of_interrupt(.CMOS_RTC);
+}
+
+CMOS_BASE_FREQ :: 32768;
+
 formosa_calendar_to_apollo :: (ct: Calendar_Time) -> Apollo_Time {
     using Basic;
     leap_year_count := leap_years_before(cast(s64) ct.year - 1) - leap_years_before(1970);
@@ -1027,45 +1035,7 @@ leap_years_before :: (year: s64) -> s64 {
 }
 
 
-#program_export
-cmos_interrupt :: () #c_call {
-    cmos_read(.STATUS_REG_C);
-    timer_ticks_elapsed += 1;
-
-    pic_end_of_interrupt(.CMOS_RTC);
-}
-
-get_system_time :: () -> Apollo_Time {
-    using Basic;
-
-    ticks := read(Hpet_Register.COUNTER);
-
-    elapsed: Apollo_Time;
-    elapsed.low = ticks;
-    elapsed *= cast(s64) hpet.base_period_femtoseconds;
-
-    return elapsed + boot_time;
-}
-
 boot_time: Apollo_Time;
-
-timer_ticks_elapsed: u64;
-timer_ticks_target: u64;
-
-CMOS_BASE_FREQ :: 32768;
-
-
-
-Pit_IO :: enum {
-    channel_0 :: 0x40;
-    channel_1 :: 0x41;
-    channel_2 :: 0x42;
-    command   :: 0x43;
-}
-
-pit_init :: () {
-//    cmd := 0b00_00_
-}
 
 
 acpi: struct {
@@ -1220,17 +1190,26 @@ Hpet_Register :: enum u64 {
     TIMER2_COMP  :: 0x148;
 }
 
-write :: (reg: Hpet_Register, value: u64) {
+write :: (reg: Hpet_Register, value: u64) #no_context {
     << cast(*u64) (hpet.base_address + cast(u64) reg) = value;
 }
 
-read :: (reg: Hpet_Register) -> u64 {
+read :: (reg: Hpet_Register) -> u64 #no_context {
     return << cast(*u64) (hpet.base_address + cast(u64) reg);
 }
 
 hpet: struct {
-    base_period_femtoseconds: u64;
+    initialized: bool;
+
     base_address: *void;
+    base_period_femtoseconds: u64;
+
+    // The point of all this crap is to get theoretical 1 femtosecond precision from get_system_time, if the hardware happens to support it and the counter doesn't fully wrap around between interrupts
+    ticks_per_interrupt: u64;
+    total_ticks: Apollo_Time;
+
+    _64bit_counter: bool;
+    counter_value_at_last_interrupt: u64;
 }
 
 hpet_init :: () {
@@ -1249,8 +1228,11 @@ hpet_init :: () {
 
     capabilities := read(Hpet_Register.CAPABILITIES);
 
+    LEG_RT_CAP :: 0x8000;
+    assert(capabilities & LEG_RT_CAP > 0, "HPET does not support legacy replacement route");
+
     COUNT_SIZE_CAP :: 0x2000;
-    assert(capabilities & COUNT_SIZE_CAP > 0, "HPET does not support 64bit mode");
+    hpet._64bit_counter = capabilities & COUNT_SIZE_CAP > 0;
 
     hpet.base_period_femtoseconds = capabilities >> 32;
     assert(hpet.base_period_femtoseconds > 0 && hpet.base_period_femtoseconds < 100_000_000);
@@ -1259,6 +1241,8 @@ hpet_init :: () {
 
     ENABLE_CNF :: 1;
     write(.CONFIG, read(.CONFIG) | ENABLE_CNF);
+
+    hpet.initialized = true;
 }
 
 hpet_get_ticks :: () -> u64 {
@@ -1274,18 +1258,68 @@ hpet_enable_interrupts :: (freq: u64) {
     Tn_PER_INT_CAP :: 0x10;
     assert(timer & Tn_PER_INT_CAP > 0, "HPET timer 0 is not periodic capable");
 
-    Tn_SIZE_CAP :: 0x20;
-    assert(timer & Tn_SIZE_CAP > 0, "HPET timer 0 is not 64bit");
+    // Tn_SIZE_CAP :: 0x20;
+    // assert(timer & Tn_SIZE_CAP > 0, "HPET timer 0 is not 64bit");
 
     Tn_INT_ENB_CNF :: 0x4;
     Tn_TYPE_CNF :: 0x8;
     write(.TIMER0, timer | Tn_TYPE_CNF | Tn_INT_ENB_CNF);
 
     ticks_per_second := cast(u64) 1_000_000_000_000_000 / hpet.base_period_femtoseconds;
-    ticks_per_interrupt := ticks_per_second / freq;
+    hpet.ticks_per_interrupt = ticks_per_second / freq;
 
-    write(.TIMER0_COMP, ticks_per_interrupt);
+    write(.TIMER0_COMP, hpet.ticks_per_interrupt);
     pic_enable_irq(.PIT);
+}
+
+#program_export
+hpet_interrupt :: (data: *Interrupt_Data) #c_call {
+    // hpet.total_ticks.low = read(.COUNTER); // add(hpet.total_ticks, .{hpet.ticks_per_interrupt, 0});
+    // hpet.counter_value_at_last_interrupt = read(Hpet_Register.COUNTER);
+
+    pic_end_of_interrupt(.PIT);
+    preempt(data.ip);
+}
+
+get_system_time :: () -> Apollo_Time {
+    using Basic;
+    assert(hpet.initialized);
+    assert(boot_time != .{});
+
+    ticks := read(Hpet_Register.COUNTER);
+    // ticks -= hpet.counter_value_at_last_interrupt;
+
+    // if !hpet._64bit_counter {
+    //     assert(false);
+    //     ticks &= 0xffff_ffff;
+    // }
+
+    elapsed: Apollo_Time;
+    elapsed.low = ticks; // = hpet.total_ticks; // + .{ticks, 0};
+    elapsed *= cast(s64) hpet.base_period_femtoseconds;
+
+    return elapsed + boot_time;
+}
+
+add :: (a: Apollo_Time, b: Apollo_Time) -> Apollo_Time #no_context {
+    c: Apollo_Time = ---;
+    p := *c; // We would like to not have to do this, but #asm doesn't let us put c yet.
+    
+    #asm {
+        mov a_low:,  [a + 0];
+        mov a_high:, [a + 8];
+
+        mov b_low:,  [b + 0];
+        mov b_high:, [b + 8];
+
+        mov [p + 0], a_low;
+        mov [p + 8], a_high;
+        
+        add [p + 0], b_low;
+        adc [p + 8], b_high;
+    }
+
+    return c;
 }
 
 
@@ -2576,4 +2610,12 @@ code_to_string :: (code: Code) -> string #expand {
     builder: String_Builder;
     print_expression(*builder, code_node);
     return builder_to_string(*builder, allocator=temp);
+}
+
+make_context :: () -> Context #no_context {
+    kernel_context: Context;
+    kernel_context.allocator.proc = allocate_memory;
+    kernel_context.logger = log;
+    kernel_context.assertion_failed = assertion_failed;
+    return kernel_context;
 }

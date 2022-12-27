@@ -12,7 +12,7 @@ main :: (file_name: string) {
     }
 
     if !file.count {
-        write_string("(empty)");
+        write_string("(empty)\n");
         return;
     }
 

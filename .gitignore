@@ -78,3 +78,4 @@ filesystem/programs/sleep_test
 filesystem/programs/cpu_time_test
 userspace/modules_test.jai
 update.txt
+userspace/assemble.jai

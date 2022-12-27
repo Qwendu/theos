@@ -39,7 +39,7 @@ interrupt_handlers: [] struct {
     .{ "zero_division", 0x00 },
     .{ "invalid_opcode_exception", 0x06 },
     .{ "gp_exception", 0x0d },
-    .{ "pit_interrupt",  0x20 },
+    .{ "hpet_interrupt",  0x20 },
     .{ "ps2_interrupt",  0x21 },
     .{ "cmos_interrupt", 0x28 },
     .{ "ps2_mouse"    ,  0x2c },

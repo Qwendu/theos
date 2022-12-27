@@ -52,7 +52,7 @@ cmd_list_tasks :: (args: ..Any) -> Any {
         new.state = task.state;
         new.memory = task.used_memory;
         new.wall_time = get_system_time() - task.start_time;
-        new.cpu_time = task.cpu_time;
+        new.cpu_time = get_cpu_time(task);
 
         if task == idle_task break;
         if task.next == *the_first_task task = idle_task;
@@ -325,8 +325,8 @@ shell_handle_mouse :: () {
         y := mouse.position_y;
         w.blitter.draw.x = x - shell.window_drag_offset_x;
         w.blitter.draw.y = y - shell.window_drag_offset_y;
-        w.shadow.draw.x = x - shell.window_drag_offset_x;
-        w.shadow.draw.y = y - shell.window_drag_offset_y;
+        w.shadow.draw.x = x - shell.window_drag_offset_x + 4;
+        w.shadow.draw.y = y - shell.window_drag_offset_y + 4;
 
         paint_screen();
     }
@@ -1108,7 +1108,8 @@ represent_apollo_delta_concise :: (time: Apollo_Time) -> string {
     context.print_style.default_format_int.minimum_digits = 2;
     defer context.print_style.default_format_int.minimum_digits = 1;
 
-    result := tprint("%s", seconds);
+    result := tprint("%ms", formatInt(milliseconds, minimum_digits = 3));
+    if seconds > 0 result = join(tprint("%s ", seconds), result);
     if minutes > 0 result = join(tprint("%m ", minutes), result);
     if hours > 0 result = join(tprint("%h ", hours), result);
     if days > 0 result = join(tprint("%d ", days), result);

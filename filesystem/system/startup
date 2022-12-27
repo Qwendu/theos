@@ -1,4 +1,5 @@
 
 set_theme mash
-echo "If you don't make stuff, there is no stuff. If you are new here, type  read help"
+echo "If you are new here, type  read help"
+echo "If you don't make stuff, there is no stuff."
 formosa

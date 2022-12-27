@@ -133,6 +133,14 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
     return task;
 }
 
+get_cpu_time :: (task: *Task_Info) -> Apollo_Time {
+    if task == current_task {
+        return task.cpu_time + get_system_time() - last_task_switch_timestamp;
+    }
+
+    return task.cpu_time;
+}
+
 yield :: () {
     new := current_task.next;
     while true {
@@ -209,21 +217,19 @@ idle :: (data: *void) {
     }
 }
 
-#program_export
-pit_interrupt :: (data: *Interrupt_Data) #c_call {
-    pic_end_of_interrupt(.PIT);
+preempt :: (rip: u64) #no_context {
+    if rip > KERNEL_BASE  return;
+    if current_task == idle_task  return;
 
-    if data.ip > KERNEL_BASE  return; // Hacky way to not preempt kernel code
-
-    kernel_context: Context;
-    kernel_context.allocator.proc = allocate_memory;
-    kernel_context.logger = log;
-    kernel_context.assertion_failed = assertion_failed;
-
-    push_context kernel_context {
+    push_context make_context() {
         yield();
     }
 }
+
+
+
+
+
 
 
 
@@ -271,8 +277,8 @@ create_window :: (width: int, height: int) -> Window_Handle {
 
         it.shadow.color.as_u32 = 0x181818;
         it.shadow.draw.target_rect = it.blitter.draw.target_rect;
-        it.shadow.draw.width += 4;
-        it.shadow.draw.height += 4;
+        it.shadow.draw.x += 4;
+        it.shadow.draw.y += 4;
 
         return cast(Window_Handle) it_index;
     }

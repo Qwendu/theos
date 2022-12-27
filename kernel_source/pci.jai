@@ -849,14 +849,14 @@ ahci_transfer_sectors :: (dev: *Mass_Storage_Device, direction: Transfer_Directi
         if (dev.ahci.port.TFD__task_file_data & ata_status > 0) continue;
 
         break;
-    }, "SATA busy timeout\n");
+    }, "SATA busy timeout");
 
     assert(dev.ahci.port.CI__command_issue & 0x1 == 0);
     dev.ahci.port.CI__command_issue |= 0x1;
 
     Timeout(#code {
         if !(dev.ahci.port.CI__command_issue & 0x1)  break;
-    }, "SATA command issue timeout\n");
+    }, "SATA command issue timeout");
 }
 
 Ahci_Command_Header :: struct {
