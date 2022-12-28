@@ -149,8 +149,6 @@ interrupt_handlers: [] struct {
         write_string("\e[31;1mWhen compiling, this build program must be executed on Linux, or within WSL.\e[0m\n");
         if file_exists("disk_images/formosa.img") {
             write_string("\nIf you have VirtualBox installed, and would like to boot the already-compiled operating system in a VM, try\n    jai first.jai - setup_vm\n    jai first.jai - run_vm\n");
-        } else {
-            write_string("\nTry running these commands\n    wsl\n    jai-linux first.jai\n    exit\n");
         }
         return;
     }
@@ -482,7 +480,7 @@ interrupt_handlers: [] struct {
             if recompiled == 0 {
                 write_string("\n(no userspace applications needed to be recompiled.)\n");
             } else {
-                print("Recompiled % userspace applications, with % compilation failure% and % already up to date.\n", recompiled, recompiled - successful, ifx recompiled-successful == 1 then "" else "s", total - recompiled);
+                print("Recompiled % userspace application%, with % compilation failure% and % already up to date.\n", recompiled, ifx recompiled == 1 then "" else "s", recompiled - successful, ifx recompiled-successful == 1 then "" else "s", total - recompiled);
             }
         }
     }
@@ -822,10 +820,13 @@ task_switch:
     push_all
 
     mov rcx, [rax]
-
+    mov r8, [rcx + 16]
+    fxsave [r8] ; Store FPU and SIMD state in the old task xsave_area
     mov [rcx], rsp ; Store current stack on current (old) task
 
     mov [rax], rbx ; Set the current task to the new task
+    mov r8, [rbx + 16]
+    fxrstor [r8] ; Load FPU and SIMD state from the new task xsave_area
 
     mov rsp, [rbx] ; Restore the stack pointer from the current (new) task
     mov rdx, [rbx + 8]

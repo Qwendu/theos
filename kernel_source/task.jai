@@ -2,6 +2,8 @@
 Task_Info :: struct {
     rsp: *void;
     page_table: u64;
+    xsave_area: *Xsave_Area #align 16;
+
     next: *Task_Info;
 
     stack_bottom: *void;
@@ -38,7 +40,25 @@ Task_Info :: struct {
 
         name: string;
     };
+
 }
+
+Xsave_Area :: struct {
+    fpu: [512] u8;
+
+    /*
+    header: struct {
+        xstate_bv: u64;
+        xcomp_bv: u64;
+       
+        padding: [48] u8;
+    };
+
+    extended_area: [4096] u8;
+    */
+}
+
+// #assert size_of(type_of(Xsave_Area.header)) == 64;
 
 the_first_task: Task_Info;
 current_task: *Task_Info;
@@ -54,6 +74,7 @@ initialize_task_manager :: () {
     the_first_task.state = .AWAKE;
     the_first_task.page_table = to_physical(pml4.data);
     the_first_task.parent_process.name = "kernel";
+    the_first_task.xsave_area = map_memory(size_of(Xsave_Area));
 
     current_task = *the_first_task;
 
@@ -63,6 +84,7 @@ initialize_task_manager :: () {
 
     idle_task = make_task(idle, stack_size = 0x400);
     idle_task.parent_process.name = "idle";
+    idle_task.xsave_area = map_memory(size_of(Xsave_Area));
 
     the_first_task.next = *the_first_task;
     idle_task.next = *the_first_task;
@@ -121,6 +143,8 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
     task.state = .AWAKE;
 
     task.start_time = get_system_time();
+    task.xsave_area = map_memory(size_of(Xsave_Area));
+    memcpy(task.xsave_area, the_first_task.xsave_area, size_of(Xsave_Area));
 
     cr3: u64;
     #asm { get_cr3 cr3; }
@@ -142,6 +166,10 @@ get_cpu_time :: (task: *Task_Info) -> Apollo_Time {
 }
 
 yield :: () {
+    // if the_first_task.state == .AWAKE {
+    //     switch_to_task(*the_first_task);
+    // }
+
     new := current_task.next;
     while true {
         if new.state == .AWAKE {
@@ -183,7 +211,9 @@ exit :: () {
     task.state = .EXITING;
 
     retired := *retired_tasks;
-    while << retired && (<< retired).state == .EXITING retired = *(<< retired).next;
+    while << retired && (<< retired).state == .EXITING {
+        retired = *(<< retired).next;
+    }
     << retired = task;
 
     if shell.foreground_task == task {
@@ -198,6 +228,7 @@ clean_up_tasks :: () {
     while retired && retired.state == .EXITING {
         stack_top := retired.stack_bottom - retired.stack_size;
         unmap_memory(retired.stack_size, cast(u64) stack_top);
+        unmap_memory(size_of(Xsave_Area), cast(u64) retired.xsave_area);
 
         if retired.thread_storage != null {
             unmap_memory(retired.thread_storage_size, cast(u64) retired.thread_storage);

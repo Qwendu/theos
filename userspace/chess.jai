@@ -5,6 +5,8 @@
 #load "chess_engine/search.jai";
 #load "chess_engine/eval.jai";
 
+#import "Random";
+
 window: *u32;
 window_size :: 45 * 8;
 field_size :: window_size / 8;
@@ -57,6 +59,8 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
 
     clear_hash_table();
 
+    random_seed(<< cast(*Random_State) *formosa_get_time());
+
     in := input();
     if in.value_pointer {
         write_string("Loading fen...\n");
@@ -90,7 +94,10 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
     while true {
         white_to_move = true;
         if white_pieces == .CPU {
-            if !computer_move(depth) return;
+            adjusted_depth := depth + cast(int) random_get() % 4;
+            adjusted_depth = clamp(adjusted_depth, 1, 10);
+
+            if !computer_move(adjusted_depth) return;
         } else {
             if !human_move() return;
         }
@@ -99,7 +106,10 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
 
         white_to_move = false;
         if black_pieces == .CPU {
-            if !computer_move(depth) return;
+            adjusted_depth := depth + cast(int) random_get() % 4;
+            adjusted_depth = clamp(adjusted_depth, 1, 10);
+
+            if !computer_move(adjusted_depth) return;
         } else {
             if !human_move() return;
         }

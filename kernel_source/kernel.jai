@@ -113,7 +113,7 @@ kernel_entry :: () {
 
         initialize_task_manager();
 
-        hpet_enable_interrupts(100);
+        hpet_enable_interrupts(250);
 
         pci_scan_all_devices();
         discover_mass_storage_devices();
@@ -452,19 +452,20 @@ enable_simd :: () {
         set_cr4 cr4;
     }
 
-    if check_feature(cpu.feature_leaves, .OSXSAVE) #asm {
+    if check_feature(cpu.feature_leaves, .XSAVE) #asm {
         get_cr4 cr4:;
         or  cr4, CR4_OSXSAVE;
         set_cr4 cr4;
     }
 
-    // if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
-    //     index: gpr === c;
-    //     
-    //     xgetbv xcr0_h:, xcr0_l:, index;
-    //     or xcr0_l, 7;
-    //     xsetbv xcr0_h, xcr0_l, index;
-    // }
+    if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
+        index: gpr === c;
+        xor index, index;
+
+        xgetbv xcr0_h:, xcr0_l:, index;
+        or xcr0_l, 7;
+        xsetbv xcr0_h, xcr0_l, index;
+    }
 }
 
 BochsBreak :: () #expand {
@@ -2472,7 +2473,7 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
         }
 
         print("Memory around the stack pointer:\n");
-        for -64 .. 63 {
+        for -32 .. 31 {
             if it % 8 == 0 {
                 print("\n");
                 if it == 0 print_hex(stack_data.sp + xx it, color = theme.accent);
@@ -2484,7 +2485,7 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
         }
 
         print("Memory around the instruction pointer:\n");
-        for -64 .. 63 {
+        for -32 .. 31 {
             if it % 8 == 0 {
                 print("\n");
                 if it == 0 print_hex(stack_data.ip + xx it, color = theme.accent);
@@ -2547,7 +2548,7 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
         }
 
         print("\n\nMemory around the instruction pointer:\n");
-        for -64 .. 63 {
+        for -32 .. 31 {
             if it % 8 == 0 {
                 print("\n");
                 if it == 0 print_hex(stack_data.ip + xx it, color = theme.accent);
@@ -2559,7 +2560,7 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
         }
 
         print("Memory around the stack pointer:\n");
-        for -64 .. 63 {
+        for -32 .. 31 {
             if it % 8 == 0 {
                 print("\n");
                 if it == 0 print_hex(stack_data.sp + xx it, color = theme.accent);
