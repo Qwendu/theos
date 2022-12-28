@@ -260,7 +260,7 @@ assertion_failed :: (location: Source_Code_Location, message: string) {
     paint_screen();
 
     if current_task == *the_first_task {
-        print("This assertion failure happened the kernel Sadge\nThere is nothing left to say or do");
+        print("This assertion failure happened the kernel Sadge\nThere is nothing left to do");
         paint_screen();
         while true {
             #asm { hlt; }

@@ -1,0 +1,9 @@
+The output of many programs looks like a table. This is not textual information, but rather well
+structured data that programs can parse out easily. Try
+
+    tasks | equals state, AWAKE
+
+This just runs a command, and then passes the output table to a userspace application, which can
+compare the names of the fields to their values, and filter the table. Another example is
+
+    list_directory "" | equals type, folder

@@ -1,0 +1,4 @@
+Move windows by holding the flag key and dragging them.
+Switch input focus by holding the flag key and pressing tab,
+or by holding the flag key and clicking a window.
+Many programs can be closed by pressing escape when they have input focus.

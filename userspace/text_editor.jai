@@ -4,6 +4,9 @@
 #import "Pnm";
 
 main :: (filename: string) {
+    write_string("Out of service\n");
+    return;
+
     file: string;
     if filename.count {
         file = cast(string) read_file(filename);
@@ -93,6 +96,25 @@ main :: (filename: string) {
 
                 else if code == .ARROW_RIGHT {
                     if cursor_pos < used cursor_pos += 1;
+                    repaint_needed = true;
+                }
+
+                else if code == .ARROW_DOWN {
+                    column: int;
+                    while cursor_pos > 0 && buffer[cursor_pos] != #char "\n" {
+                        column += 1;
+                    }
+
+                    while cursor_pos < used && buffer[cursor_pos] != #char "\n" {
+                        cursor_pos += 1;
+                    }
+
+                    for 0..column - 1 {
+                        if cursor_pos >= used break;
+                        if buffer[cursor_pos] == #char "\n" break;
+                        cursor_pos += 1;
+                    }
+
                     repaint_needed = true;
                 }
 

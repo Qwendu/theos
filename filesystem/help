@@ -13,4 +13,9 @@ will show you a list of programs you can run. Command line arguments are declare
 header, and are type-checked, so if you get them wrong the shell can let you know.
 
 If some info that you still wanted to look at is now starting to be scrolled off the top of the
-screen, you can hold left-control and press the up-arrow to scroll back up.
+screen, you can hold left-control and press the up-arrow to scroll back up. Now try
+
+    read interact
+    read fun_things
+    read structured_shell
+    
