@@ -22,7 +22,6 @@ exceptions: [] struct {
     .{ "Invalid TSS",                      0x0a, true  },
     .{ "Segment not present",              0x0b, true  },
     .{ "Stack segment fault",              0x0c, true  },
-//  .{ "Page fault",                       0x0e, true  },
     .{ "Floating point exception",         0x10, false },
     .{ "Alignment check fault",            0x11, true  },
     .{ "Machine check fault",              0x12, false },
@@ -58,7 +57,6 @@ interrupt_handlers: [] struct {
     set_build_options_dc(.{do_output = false});
     user_args, compiler_args := get_build_options().compile_time_command_line;
 
-    make_vdi: bool;
     run_vm: bool;
     userspace: bool;
     no_kernel: bool;
@@ -70,7 +68,6 @@ interrupt_handlers: [] struct {
             assemble();
             return;
 
-          case "vdi";        make_vdi = true;
           case "run_vm";     run_vm = true;
           case "user";       userspace = true;
           case "no_kernel";  no_kernel = true;
@@ -79,27 +76,52 @@ interrupt_handlers: [] struct {
             print("\nSee readme.md.\n\n");
             return;
           case;
-            print("Error: did not understand command line argument \"%\".\nSee https://github.com/dlandahl/theos/readme.md", it);
+            print("Error: did not understand command line argument \"%\".\nSee https://github.com/dlandahl/theos/readme.md\n\n", it);
             return;
         }
     }
 
     if run_vm {
-        if make_vdi || userspace || setup_vm || no_kernel {
+        if userspace || setup_vm || no_kernel {
             write_string("WARNING: flags other than \"run_vm\" are being ignored. You should compile and run using sequent commands.\n");
         }
 
         write_string("\n=== Running VirtualBox ===\n");
         shell("VBoxManage controlvm formosa poweroff");
-        shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
-        shell("VBoxManage closemedium disk_images/formosa.vdi");
+
+        disks := file_list("disk_images");
+        vdi := array_find(disks, "disk_images/formosa.vdi");
+        img := array_find(disks, "disk_images/formosa.img");
+
+        if !img && !vdi {
+            write_string("There is no disk image! You must compile before you run. See readme.md (exiting.)\n");
+            return;
+        }
+
+        if !vdi {
+            write_string("No VirtualBox VDI found, generating from \"disk_images/formosa.img\".\n");
+            shell("VBoxManage convertfromraw --format VDI disk_images/formosa.img disk_images/formosa.vdi");
+        } else {
+            shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
+            shell("VBoxManage closemedium disk_images/formosa.vdi");
+
+            vdi_modtime := file_modtime_and_size("disk_images/formosa.vdi");
+            img_modtime := file_modtime_and_size("disk_images/formosa.img");
+
+            if img_modtime > vdi_modtime {
+                write_string("\nThe raw disk image is more recent than the VirtualBox disk image. Reformatting.\n\n");
+                file_delete("disk_images/formosa.vdi");
+                shell("VBoxManage convertfromraw --format VDI disk_images/formosa.img disk_images/formosa.vdi");
+            }
+        }
+
         shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium disk_images/formosa.vdi --device 0 --type hdd");
         shell("VBoxManage startvm formosa -E VBOX_GUI_DBG_ENABLED=true");
         return;
     }
 
     if setup_vm {
-        if make_vdi || run_vm || userspace || no_kernel {
+        if run_vm || userspace || no_kernel {
             write_string("WARNING: flags other than \"setup_vm\" are being ignored. You should compile and run using sequent commands.\n");
         }
 
@@ -124,7 +146,12 @@ interrupt_handlers: [] struct {
     }
 
     #if OS != .LINUX {
-        write_string("This build program must be executed on linux, or within WSL.\n");
+        write_string("\e[31;1mWhen compiling, this build program must be executed on Linux, or within WSL.\e[0m\n");
+        if file_exists("disk_images/formosa.img") {
+            write_string("\nIf you have VirtualBox installed, and would like to boot the already-compiled operating system in a VM, try\n    jai first.jai - setup_vm\n    jai first.jai - run_vm\n");
+        } else {
+            write_string("\nTry running these commands\n    wsl\n    jai-linux first.jai\n    exit\n");
+        }
         return;
     }
 
@@ -134,6 +161,30 @@ interrupt_handlers: [] struct {
         using version_info;
         print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.049, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
         print("However there's a chance it works anyway, so continuing\n");
+    }
+
+    nasm_success := shell("nasm -v > /dev/null", print_output = false);
+
+    if !nasm_success {
+        write_string("\nIt looks like \"nasm\" is not installed on your Linux system.\n");
+        write_string("Nasm is required in order to assemble the bootloader.\n");
+
+        os_name := read_entire_file("/etc/os-release");
+        if contains_nocase(os_name, "ubuntu") {
+            write_string("Since you are on Ubuntu, we will try to install the program. You may be prompted for root user credentials.\n\n");
+
+            result := shell("sudo apt install nasm", capture = true);
+
+            if !result || !shell("nasm -v > /dev/null", print_output = false) {
+                write_string("\n\nIt appears that this has failed!\nPlease install the Nasm package in the way that is usual for your Linux system. (exiting)\n");
+                return;
+            }
+
+            write_string("It appears that this was successful. Continuing.\n");
+        } else {
+            write_string("Since you do not appear to be on Ubuntu, please install the Nasm package in the way that is usual for your Linux system. (exiting)\n");
+            return;
+        }
     }
 
     make_directory_if_it_does_not_exist(".build");
@@ -269,13 +320,24 @@ interrupt_handlers: [] struct {
             add_build_string(tprint("BOOT_DATA_SIZE    :: %;", BOOT_DATA_SIZE), w);
             add_build_string(tprint("COMPILER_VERSION  :: \"%\";", compiler_get_version_info(null)), w);
 
+            linker_fail: bool;
             for all_messages {
                 if it.kind == .ERROR {
                     write_string("Kernel Compilation Failure!\n");
                     return;
                 }
+
+                if it.kind == .PHASE {
+                    phase := cast(*Message_Phase) it;
+                    if phase.phase == .POST_WRITE_EXECUTABLE && phase.linker_exit_code != 0 {
+                        write_string("It appears there were linker errors. Cannot continue.\n");
+                        linker_fail = true;
+                    }
+                }
             }
+
             compiler_end_intercept(w);
+            if linker_fail return;
 
             objdump_command := "objdump -x .build/kernel_elf -d -M intel --source";
             success, error_code, stdout, stderr := shell(objdump_command, print_output = false);
@@ -367,14 +429,19 @@ interrupt_handlers: [] struct {
     }
 
     if userspace {
-        write_string("\n=== Building Userspace Apps ===\n");
+        write_string("\n=== Building Userspace ===\n");
         {
             make_directory_if_it_does_not_exist(".build/userspace");
             files := file_list("userspace");
 
             hashes: [] u32;
             new_hashes: [..] u32;
-            hash_cache, success := read_entire_file(".build/userspace_app_hashes");
+
+            hash_cache: string;
+            success: bool;
+            if file_exists(".build/userspace_app_hashes") {
+                hash_cache, success = read_entire_file(".build/userspace_app_hashes");
+            }
 
             system_library_code := read_entire_file("modules/Formosa.jai");
             library_hash := sdbm_hash(system_library_code.data, system_library_code.count);
@@ -387,8 +454,12 @@ interrupt_handlers: [] struct {
                 hashes.count = hash_cache.count / 4;
             }
 
+            recompiled: int;
+            successful: int;
+            total: int;
             for filename: files {
                 if !ends_with(filename, ".jai") continue;
+                total += 1;
                 name := basename(filename);
 
                 source_code, success := read_entire_file(filename);
@@ -403,13 +474,20 @@ interrupt_handlers: [] struct {
                     continue filename;
                 }
                 context.logger = (message: string, *void, Log_Info) {};
-                build_formosa_app(name);
+                successful += cast(int) build_formosa_app(name);
+                recompiled += 1;
             }
             write_entire_file(".build/userspace_app_hashes", new_hashes.data, new_hashes.count * 4);
+
+            if recompiled == 0 {
+                write_string("\n(no userspace applications needed to be recompiled.)\n");
+            } else {
+                print("Recompiled % userspace applications, with % compilation failure% and % already up to date.\n", recompiled, recompiled - successful, ifx recompiled-successful == 1 then "" else "s", total - recompiled);
+            }
         }
     }
 
-    write_string("\n=== Creating Floppy Image ===\n");
+    write_string("\n=== Creating Raw Disk Image ===\n");
     {
         DISK_SIZE :: 0x400_0000;
 
@@ -472,11 +550,7 @@ interrupt_handlers: [] struct {
         write_entire_file("disk_images/formosa.img", disk_image, DISK_SIZE);
     }
 
-    if make_vdi {
-        write_string("\n=== Creating Virtual Hard Disk ===\n");
-        file_delete("disk_images/formosa.vdi");
-        shell("VBoxManage convertfromraw --format VDI disk_images/formosa.img disk_images/formosa.vdi");
-    }
+    write_string("\nIf all went well, this program has written a bootable disk image into \"disk_images/formosa.img\".\n");
 }
 
 assemble :: () -> bool {
@@ -496,13 +570,13 @@ assemble :: () -> bool {
 }
 
 
-shell :: (format: string, args: .. Any, print_output := true, dont_quote := false) -> bool, int, string, string {
+shell :: (format: string, args: .. Any, print_output := true, dont_quote := false, capture := true, silent := false) -> bool, int, string, string {
     command := tprint(format, .. args);
-    print("|shell| \e[36;1m\"%\"\e[0m\n", command);
+    if !silent print("|shell| \e[36;1m\"%\"\e[0m\n", command);
 
-    result, stdout, stderr := run_command(.. split(command, " "), capture_and_return_output = true, arg_quoting = ifx dont_quote then .NEVER_QUOTE else Process_Argument_Quoting.QUOTE_IF_NEEDED);
+    result, stdout, stderr := run_command(.. split(command, " "), capture_and_return_output = capture, arg_quoting = ifx dont_quote then .NEVER_QUOTE else Process_Argument_Quoting.QUOTE_IF_NEEDED);
 
-    if print_output && stdout.count || stderr.count {
+    if !silent if print_output && stdout.count || stderr.count {
         print("\e[33;1m%", stdout);
         print("%\e[0m", stderr);
     }
@@ -517,7 +591,7 @@ Plt_Patch :: struct {
     plt_index: int = -1;
 }
 
-patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, default_target: string = "") {
+patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, default_target: string = "", silent := false) {
     elf := elf_file;
     elf_header := cast(*Elf64_Ehdr) elf.data;
 
@@ -620,7 +694,7 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, defaul
 
         // assert(header.sh_entsize == PLT_ENTRY_SIZE);
         plt_entry_count := header.sh_size / PLT_ENTRY_SIZE;
-        print("PLT entry count: %\n", plt_entry_count);
+        if !silent print("PLT entry count: %\n", plt_entry_count);
 
         for 1..plt_entry_count-1 {
             plt_offset := PLT_ENTRY_SIZE * it;
@@ -658,7 +732,7 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, defaul
         break;
     }
 
-    print("Successful patches: %\n", successful_patches);
+    if !silent print("Successful patches: %\n", successful_patches);
     // for successful_patches
 }
 

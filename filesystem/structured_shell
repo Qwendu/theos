@@ -7,3 +7,11 @@ This just runs a command, and then passes the output table to a userspace applic
 compare the names of the fields to their values, and filter the table. Another example is
 
     list_directory "" | equals type, folder
+
+Composing commands on the command line is normally an inexpressive way to control a computer.
+The binary data format helps a little, but in the future we will also do many fun things with
+visual representation and mutation of this data.
+
+Input and output of data from a process, from the perspective of user code, can be implemented
+very transparently by the operating system API, if your programming language of choice supports
+type introspection.

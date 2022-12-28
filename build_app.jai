@@ -16,10 +16,10 @@ _formosa_start :: () #no_context {
 
 END;
 
-build_formosa_app :: (name: string, optimize: bool = false) {
+build_formosa_app :: (name: string, optimize: bool = false) -> bool {
     program_parameters: [..] *Code_Declaration;
 
-    print("\n=== Compiling User Application \"%\" ===\n", name);
+    print("Compiling \"%\"\n", name);
     {
         w := compiler_create_workspace("Formosa User Application");
         options := get_build_options(w);
@@ -71,7 +71,7 @@ build_formosa_app :: (name: string, optimize: bool = false) {
 
             if message.kind == .COMPLETE {
                 complete := cast(*Message_Complete) message;
-                if complete.error_code == .COMPILATION_FAILED return;
+                if complete.error_code == .COMPILATION_FAILED return false;
                 break;
             }
 
@@ -156,13 +156,11 @@ build_formosa_app :: (name: string, optimize: bool = false) {
     assert(success);
 
     objdump_command := tprint("objdump -x .build/userspace/% -d -M intel --source", name);
-    yes, error_code, stdout, stderr := shell(objdump_command, print_output = false);
-    if !yes || error_code != 0 {
-        write_string("objdump failed to run! (continuing)\n");
+    yes, error_code, stdout, stderr := shell(objdump_command, print_output = false, silent = true);
+    if yes && error_code == 0 {
+        write_entire_file(tprint(".build/%_elf.objdump.txt", name), stdout);
     }
-    else write_entire_file(tprint(".build/%_elf.objdump.txt", name), stdout);
 
-    write_string("\n=== Patching ELF ===\n");
     {
         patches := Plt_Patch.[
             .{source = "crt_memset",  target = "memset"},
@@ -194,10 +192,9 @@ build_formosa_app :: (name: string, optimize: bool = false) {
 
         default := "plt_entry_%_must_be_patched";
 
-        patch_procedure_linkage_table(cast([] u8) elf, patches, default);
+        patch_procedure_linkage_table(cast([] u8) elf, patches, default, silent = true);
     }
 
-    write_string("\n=== Writing executable ===\n");
     {
         header: Formosa_Exe_Header;
         header.input_parameter_count = program_parameters.count;
@@ -285,6 +282,8 @@ build_formosa_app :: (name: string, optimize: bool = false) {
         file_write(*file, cast(string) elf);
         file_close(*file);
     }
+
+    return true;
 }
 
 #import "Compiler";
