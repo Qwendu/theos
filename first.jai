@@ -81,9 +81,71 @@ interrupt_handlers: [] struct {
         }
     }
 
+    is_wsl := false;
+    #if OS == .LINUX {
+        success, output := shell("uname -a", print_output = false);
+        is_wsl = contains_nocase(output, "microsoft");
+    }
+
+    if setup_vm {
+        if run_vm || userspace || no_kernel {
+            write_string("Flags other than \"setup_vm\" are being ignored. You should compile and run using sequent commands.\n");
+        }
+
+        if is_wsl {
+            write_string("\nIt appears you are within WSL. Please attempt to setup the VM in the Windows host instead, since it will need to open a window.\n");
+            return;
+        }
+
+        write_string("\n=== Creating VM ===\n");
+
+        exists, vminfo := shell("VBoxManage showvminfo \"formosa\" --machinereadable", dont_quote = true, print_output = false);
+        disk_inserted: bool;
+
+        if exists {
+            lines := split(vminfo, cast(u8) #char "\n");
+            for lines {
+                field := split(it, cast(u8) #char "=");
+                if contains(field[0], "\"AHCI-0-0\"") {
+                    if !contains(field[1], "none") {
+                        shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
+                        break;
+                    }
+                }
+            }
+
+            if file_exists("disk_images/formosa.vdi") {
+                shell("VBoxManage closemedium disk_images/formosa.vdi");
+                file_delete("disk_images/formosa.vdi");
+            }
+
+            shell("VBoxManage unregistervm --delete formosa");
+        }
+
+        shell("VBoxManage createvm --name formosa --register");
+        shell("VBoxManage storagectl formosa --name AHCI --add sata --controller IntelAhci");
+        shell("VBoxManage modifyvm formosa --hpet on");
+        shell("VBoxManage modifyvm formosa --memory 4096");
+        shell("VBoxManage modifyvm formosa --vram 128");
+        shell("VBoxManage modifyvm formosa --bioslogofadein off");
+        shell("VBoxManage modifyvm formosa --bioslogofadeout off");
+        shell("VBoxManage modifyvm formosa --bioslogodisplaytime 0");
+        shell("VBoxManage modifyvm formosa --biosbootmenu disabled");
+        shell("VBoxManage setextradata formosa \"CustomVideoMode1\" \"2560x1440x32\"", dont_quote = true);
+        shell("VBoxManage setextradata formosa \"CustomVideoMode2\" \"1920x1080x32\"", dont_quote = true);
+        shell("VBoxManage setextradata formosa GUI/MaxGuestResolution any");
+        shell("VBoxManage setextradata formosa GUI/DefaultCloseAction PowerOff");
+        return;
+    }
+
     if run_vm {
         if userspace || setup_vm || no_kernel {
-            write_string("WARNING: flags other than \"run_vm\" are being ignored. You should compile and run using sequent commands.\n");
+            write_string("Flags other than \"run_vm\" are being ignored. You should compile and run using sequent commands.\n");
+        }
+
+        if is_wsl {
+            write_string("\nIt appears you are within WSL. Please attempt to run the VM in the Windows host instead, since it will need to open a window.\n");
+            return;
         }
 
         write_string("\n=== Running VirtualBox ===\n");
@@ -120,31 +182,6 @@ interrupt_handlers: [] struct {
         return;
     }
 
-    if setup_vm {
-        if run_vm || userspace || no_kernel {
-            write_string("WARNING: flags other than \"setup_vm\" are being ignored. You should compile and run using sequent commands.\n");
-        }
-
-        write_string("\n=== Creating VM ===\n");
-        shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
-        shell("VBoxManage closemedium disk_images/formosa.vdi");
-        shell("VBoxManage unregistervm --delete formosa");
-        shell("VBoxManage createvm --name formosa --register");
-        shell("VBoxManage storagectl formosa --name AHCI --add sata --controller IntelAhci");
-        shell("VBoxManage modifyvm formosa --hpet on");
-        shell("VBoxManage modifyvm formosa --memory 4096");
-        shell("VBoxManage modifyvm formosa --vram 128");
-        shell("VBoxManage modifyvm formosa --bioslogofadein off");
-        shell("VBoxManage modifyvm formosa --bioslogofadeout off");
-        shell("VBoxManage modifyvm formosa --bioslogodisplaytime 0");
-        shell("VBoxManage modifyvm formosa --biosbootmenu disabled");
-        shell("VBoxManage setextradata formosa \"CustomVideoMode1\" \"2560x1440x32\"", dont_quote = true);
-        shell("VBoxManage setextradata formosa \"CustomVideoMode2\" \"1920x1080x32\"", dont_quote = true);
-        shell("VBoxManage setextradata formosa GUI/MaxGuestResolution any");
-        shell("VBoxManage setextradata formosa GUI/DefaultCloseAction PowerOff");
-        return;
-    }
-
     #if OS != .LINUX {
         write_string("\e[31;1mWhen compiling, this build program must be executed on Linux, or within WSL.\e[0m\n");
         if file_exists("disk_images/formosa.img") {
@@ -161,7 +198,7 @@ interrupt_handlers: [] struct {
         print("However there's a chance it works anyway, so continuing\n");
     }
 
-    nasm_success := shell("nasm -v > /dev/null", print_output = false);
+    nasm_success := shell("nasm -v", print_output = false);
 
     if !nasm_success {
         write_string("\nIt looks like \"nasm\" is not installed on your Linux system.\n");
@@ -173,7 +210,7 @@ interrupt_handlers: [] struct {
 
             result := shell("sudo apt install nasm", capture = true);
 
-            if !result || !shell("nasm -v > /dev/null", print_output = false) {
+            if !result || !shell("nasm -v", print_output = false) {
                 write_string("\n\nIt appears that this has failed!\nPlease install the Nasm package in the way that is usual for your Linux system. (exiting)\n");
                 return;
             }
@@ -190,7 +227,7 @@ interrupt_handlers: [] struct {
     #if OS == .LINUX if false {
         write_string("\n=== Applying Module Patches ===\n");
 
-        success, exit_code, stdout, stderr := shell("which jai-linux", print_output = false);
+        success, stdout, stderr := shell("which jai-linux", print_output = false);
         if !stdout.count {
             write_string("Could not find jai-linux executable using \"which\".\n");
             return;
@@ -338,8 +375,8 @@ interrupt_handlers: [] struct {
             if linker_fail return;
 
             objdump_command := "objdump -x .build/kernel_elf -d -M intel --source";
-            success, error_code, stdout, stderr := shell(objdump_command, print_output = false);
-            if !success || error_code != 0 {
+            success, stdout, stderr := shell(objdump_command, print_output = false);
+            if !success {
                 write_string("objdump failed to run! (continuing)\n");
             }
             else write_entire_file(".build/kernel_elf.objdump.txt", stdout);
@@ -499,7 +536,7 @@ interrupt_handlers: [] struct {
         kernel := file_open(".build/kernel.bin");
         file_read(kernel, disk_image + cursor, file_length(kernel));
         cursor += file_length(kernel);
-        print("Kernel size, bytes: %\n", file_length(kernel));
+        print("Kernel size: % kb\n", file_length(kernel) / 1024);
 
         Fs_Data :: struct {
             disk_image: *void;
@@ -556,8 +593,8 @@ assemble :: () -> bool {
 
     {
         od_command := "od -t x1z -A x -v .build/boot_loader.bin";
-        success, error_code, stdout, stderr := shell(od_command, print_output = false);
-        if !success || error_code != 0 {
+        success, stdout, stderr := shell(od_command, print_output = false);
+        if !success {
             write_string("od failed to run! (continuing) \n");
         } else {
             write_entire_file(".build/boot_loader.hex.txt", stdout);
@@ -568,18 +605,18 @@ assemble :: () -> bool {
 }
 
 
-shell :: (format: string, args: .. Any, print_output := true, dont_quote := false, capture := true, silent := false) -> bool, int, string, string {
+shell :: (format: string, args: .. Any, print_output := true, dont_quote := false, capture := true, silent := false) -> bool, string, string {
     command := tprint(format, .. args);
     if !silent print("|shell| \e[36;1m\"%\"\e[0m\n", command);
 
     result, stdout, stderr := run_command(.. split(command, " "), capture_and_return_output = capture, arg_quoting = ifx dont_quote then .NEVER_QUOTE else Process_Argument_Quoting.QUOTE_IF_NEEDED);
 
-    if !silent if print_output && stdout.count || stderr.count {
+    if !silent if print_output && (stdout.count || stderr.count) {
         print("\e[33;1m%", stdout);
         print("%\e[0m", stderr);
     }
 
-    return !result.exit_code, result.exit_code, stdout, stderr;
+    return !result.exit_code, stdout, stderr;
 }
 
 Plt_Patch :: struct {
@@ -821,12 +858,12 @@ task_switch:
 
     mov rcx, [rax]
     mov r8, [rcx + 16]
-    fxsave [r8] ; Store FPU and SIMD state in the old task xsave_area
+    fxsave64 [r8] ; Store FPU and SIMD state in the old task's xsave_area
     mov [rcx], rsp ; Store current stack on current (old) task
 
     mov [rax], rbx ; Set the current task to the new task
     mov r8, [rbx + 16]
-    fxrstor [r8] ; Load FPU and SIMD state from the new task xsave_area
+    fxrstor64 [r8] ; Load FPU and SIMD state from the new task's xsave_area
 
     mov rsp, [rbx] ; Restore the stack pointer from the current (new) task
     mov rdx, [rbx + 8]

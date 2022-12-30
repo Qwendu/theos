@@ -40,7 +40,6 @@ Task_Info :: struct {
 
         name: string;
     };
-
 }
 
 Xsave_Area :: struct {
@@ -228,7 +227,7 @@ clean_up_tasks :: () {
     while retired && retired.state == .EXITING {
         stack_top := retired.stack_bottom - retired.stack_size;
         unmap_memory(retired.stack_size, cast(u64) stack_top);
-        unmap_memory(size_of(Xsave_Area), cast(u64) retired.xsave_area);
+        // unmap_memory(size_of(Xsave_Area), cast(u64) retired.xsave_area);
 
         if retired.thread_storage != null {
             unmap_memory(retired.thread_storage_size, cast(u64) retired.thread_storage);
@@ -249,7 +248,7 @@ idle :: (data: *void) {
 }
 
 preempt :: (rip: u64) #no_context {
-    if rip > KERNEL_BASE  return;
+    if rip > 0xffff_8000_0000_0000  return;
     if current_task == idle_task  return;
 
     push_context make_context() {

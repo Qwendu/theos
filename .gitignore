@@ -51,6 +51,9 @@ filesystem/programs/key_code_printer
 filesystem/programs/paint
 filesystem/programs/modules_test
 filesystem/programs/example
+filesystem/programs/create_many_files
+filesystem/programs/sleep_test
+filesystem/programs/cpu_time_test
 
 .#*
 
@@ -63,19 +66,15 @@ filesystem/code/x86_64.json
 aaaaaaa.png
 ahci_test
 userspace_apps/chess_engine/_libnnueprobe.a
+
 userspace/paint.jai
 userspace/example.jai
+userspace/modules_test.jai
 
 filesystem/system/keyboard_layouts/ansi_us_qwerty.xml
-filesystem/fun_things
 
 filesystem/image_test.jpg
 filesystem/OpenSans-BoldItalic.ttf
 freetype-2.12.1.tar.gz
 freetype-2.12.1/*
-filesystem/programs/create_many_files
-filesystem/programs/sleep_test
-filesystem/programs/cpu_time_test
-userspace/modules_test.jai
 update.txt
-userspace/assemble.jai

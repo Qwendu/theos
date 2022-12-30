@@ -11,9 +11,7 @@ main :: (file_name: string) {
     }
 
     if !file.count {
-        write_string("Can't set theme: this file was not found or is empty: \"");
-        write_string(file_name);
-        write_string("\"\n");
+        write_string("Not a valid theme - for a list of some themes, type\n    list_directory \"themes\"\n");
         return;
     }
 

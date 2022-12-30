@@ -113,7 +113,7 @@ kernel_entry :: () {
 
         initialize_task_manager();
 
-        hpet_enable_interrupts(250);
+        hpet_enable_interrupts(100);
 
         pci_scan_all_devices();
         discover_mass_storage_devices();
@@ -159,7 +159,7 @@ kernel_entry :: () {
         #if !ENABLE_VESA {
             print("This is where we start entering the shell.\n");
             print("However, we're in VGA debugging mode from where we can't draw anything, so we're going to halt.\n");
-            while true #asm { hlt; }
+            while true #asm { cli; hlt; }
         }
 
         init_graphics(*boot_data);
@@ -458,14 +458,14 @@ enable_simd :: () {
         set_cr4 cr4;
     }
 
-    if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
-        index: gpr === c;
-        xor index, index;
-
-        xgetbv xcr0_h:, xcr0_l:, index;
-        or xcr0_l, 7;
-        xsetbv xcr0_h, xcr0_l, index;
-    }
+    // if check_feature(cpu.feature_leaves, .AVX) #asm XSAVE {
+    //     index: gpr === c;
+    //     xor index, index;
+    //     
+    //     xgetbv xcr0_h:, xcr0_l:, index;
+    //     or xcr0_l, 7;
+    //     xsetbv xcr0_h, xcr0_l, index;
+    // }
 }
 
 BochsBreak :: () #expand {
@@ -1355,7 +1355,7 @@ Page_Flags :: enum_flags u64 {
 
 VIRTUAL_MIRROR   : u64 : 0xffff_ffff_c000_0000;
 KERNEL_BASE      : u64 : 0xffff_ffff_8000_0000;
-HEAP_BASE        : u64 : 0xffff_ffff_80c0_0000;
+HEAP_BASE        : u64 : 0xffff_8000_0000_0000;
 //                       0x0000_ffff_ffff_ffff;
 
 to_virtual :: (phys: u64) -> *u64 {
@@ -1526,7 +1526,7 @@ address_is_page :: (address: u64) -> bool {
         return false;
     }
 
-    if (address >> 48 != 0xffff) && (address >> 48 != 0x0) {
+    if !canonical(address) {
         printf("Address is not a page: %, it is not canonical\n", address);
         return false;
     }
@@ -1537,6 +1537,26 @@ address_is_page :: (address: u64) -> bool {
     }
 
     return true;
+}
+
+canonical :: (address: u64) -> bool {
+    if address & 0x0000_8000_0000_0000 {
+        return address >> 48 == 0xffff;
+    }
+
+    return address >> 48 == 0x0000;
+}
+
+canonical :: (address: *void) -> bool {
+    return canonical(cast(u64) address);
+}
+
+assert_canonical :: (address: *void, call_site := #caller_location) {
+    if !canonical(address) {
+        printf("Address is not canonical: %\nCall: %\n", address, call_site);
+        paint_screen();
+        #asm { cli; hlt; }
+    }
 }
 
 get_new_virtual_page :: (count: int = 1) -> u64 {
@@ -1600,7 +1620,8 @@ page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
             get_cr2 cr2;
         }
         print("CR2 contains       "); print_hex(cr2); print(".\n");
-        print("VESA buffer        "); print_hex(cast(u64) graphics.vesa_framebuffer); print(".\n\n");
+        print("Heap watermark     "); print_hex(heap_virtual_page_watermark * 0x1000); print(".\n\n");
+
         // print("Last gotted page:  "); print_hex(last_gotted_page_frame); print(".\n");
 
         phys, present := get_physical_address(xx cr2);
@@ -1642,15 +1663,15 @@ page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
         }
 
         if current_task != *the_first_task {
-            print("Exiting.\n");
+            print("Exiting.\n"); while true { #asm { cli; hlt; }}
             exit();
         } else {
-            print("This happened in the kernel. This is a bluescreen except the screen's not blue\n");
+            print("This happened in the kernel. There is nothing left to do.\n");
         }
         paint_screen();
     }
 
-    while true #asm { hlt; }
+    while true #asm { cli; hlt; }
 }
 
 
@@ -1784,7 +1805,9 @@ create_address_space :: () -> u64 {
     page_table: [] u64;
     page_table.data = map_memory(0x1000);
     page_table.count = 0x200;
-    page_table[0x1ff] = pml4[0x1ff];
+    for 0x100 .. 0x1ff {
+        page_table[it] = pml4[it];
+    }
     // page_table[0x000] = pml4[0x000];
 
     return get_physical_address(page_table.data);
@@ -1999,6 +2022,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         msg: Message;
         msg.kind = .NONE;
 
+
         event, success := read_event_buffer(*current_task.parent_process.input);
         if success {
             msg.kind = .KEYBOARD;
@@ -2129,7 +2153,6 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             unmap_memory(xx data.rbx, xx data.rcx);
 
           case GET_MESSAGE;
-            yield();
             result := cast(*Message) data.rbx;
             << result = get_message();
 
@@ -2423,24 +2446,27 @@ invalid_opcode_exception :: (stack_data: *Interrupt_Data) #c_call {
             }
         }
         if current_task != *the_first_task {
-            print("Exiting.\n");
+            print("Exiting.\n"); while true { #asm { cli; hlt; }}
             exit();
         } else {
-            print("This happened in the kernel. This is a bluescreen except the screen's not blue\n");
+            print("This happened in the kernel. There is nothing left to do.\n");
         }
     }
 
-    while true #asm { hlt; }
+    while true #asm { cli; hlt; }
 }
 
 #program_export
 gp_exception :: (stack_data: *Interrupt_Data) #c_call {
     stack_data = xx (cast(*u8) stack_data + 8);
+    error_code := << cast(*u64) stack_data;
 
     push_context Context.{} {
 //      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
         print("An exception has occurred:  ");
-        print("General Protection fault #GP\n\n", theme.accent);
+        print("General Protection Fault #GP\n\n", theme.accent);
+
+        print("Error code: "); print_hex(error_code); print("\n");
 
         print("Interrupt stack:\n");
         print("RIP:    "); print_hex(stack_data.ip);    print("\n");
@@ -2451,7 +2477,7 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
 
         paint_screen();
 
-        #if PAGE_FAULT_STACK_TRACE {
+        #if PAGE_FAULT_STACK_TRACE && false {
             if current_task && current_task.the_context {
                 print("\nStack trace:\n");
                 node := current_task.the_context.stack_trace;
@@ -2484,7 +2510,7 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
             print(" ");
         }
 
-        print("Memory around the instruction pointer:\n");
+        print("\n\nMemory around the instruction pointer:\n");
         for -32 .. 31 {
             if it % 8 == 0 {
                 print("\n");
@@ -2497,15 +2523,15 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
         }
 
         if current_task != *the_first_task {
-            print("Exiting.\n");
+            print("\nExiting.\n"); while true { #asm { cli; hlt; }}
             exit();
         } else {
-            print("This happened in the kernel. This is a bluescreen except the screen's not blue\n");
+            print("\nThis happened in the kernel. There is nothing left to do.\n");
         }
         paint_screen();
     }
 
-    while true #asm { hlt; }
+    while true #asm { cli; hlt; }
 }
 
 #program_export
@@ -2573,14 +2599,14 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
 
         paint_screen();
         if current_task != *the_first_task {
-            print("Exiting.\n");
+            print("Exiting.\n"); while true { #asm { cli; hlt; }}
             exit();
         } else {
-            print("This happened in the kernel. This is a bluescreen except the screen's not blue\n");
+            print("This happened in the kernel. There is nothing left to do.\n");
         }
     }
 
-    while true #asm { hlt; }
+    while true #asm { cli; hlt; }
 }
 
 write_string :: (message: string, to_standard_error := false) #no_context {

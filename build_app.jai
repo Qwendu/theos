@@ -156,8 +156,8 @@ build_formosa_app :: (name: string, optimize: bool = false) -> bool {
     assert(success);
 
     objdump_command := tprint("objdump -x .build/userspace/% -d -M intel --source", name);
-    yes, error_code, stdout, stderr := shell(objdump_command, print_output = false, silent = true);
-    if yes && error_code == 0 {
+    yes, stdout, stderr := shell(objdump_command, print_output = false, silent = true);
+    if yes {
         write_entire_file(tprint(".build/%_elf.objdump.txt", name), stdout);
     }
 

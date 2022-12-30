@@ -1,5 +1,7 @@
  
 #import "Formosa";
+#import "Formosa_Utilities";
+#import "Pnm";
 
 #load "chess_engine/movegen.jai";
 #load "chess_engine/search.jai";
@@ -103,6 +105,10 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
         }
 
         if check_win_condition() return;
+        if check_for_repetition(*chess, fifty) {
+            write_string("Draw! (repetition)\n");
+            return;
+        }
 
         white_to_move = false;
         if black_pieces == .CPU {
@@ -115,6 +121,11 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
         }
 
         if check_win_condition() return;
+        if check_for_repetition(*chess, fifty) {
+            write_string("Draw! (repetition)\n");
+            return;
+        }
+
     }
 }
 
@@ -171,10 +182,7 @@ write_fen :: () {
     cursor += 1;
     space[cursor] = #char "0";
 
-    time := formosa_get_time();
-    apollo: Apollo_Time;
-    apollo.low = time.low;
-    apollo.high = time.high;
+    apollo := conv(formosa_get_time());
     ct := formosa_apollo_to_calendar(apollo);
     filename := tprint("chess_files/games/%1%2%3", ct.hour, ct.minute, ct.second);
 
@@ -218,6 +226,8 @@ clamp :: (value: int, min: int, max: int) -> int {
 computer_move :: (depth: int) -> bool {
     move := search(*chess, clamp(depth, 1, 10), fifty);
     make_move(*chess, move);
+
+    fifty = fifty_move(*chess, move, fifty);
 
     message := get_message();
     while message.kind != .NONE {
@@ -294,6 +304,8 @@ human_move :: () -> bool {
                         flags, legal_from, legal_to := decode_move16(it);
                         if legal_from == from && legal_to == to {
                             make_move(*chess, it);
+
+                            fifty = fifty_move(*chess, move, fifty);
 
                             draw_square(cvt_square(from));
                             draw_square(selected_square);
@@ -401,78 +413,14 @@ blend :: (target: u32, source: u32, t: float) -> u32 #expand {
     return result;
 }
 
+fifty_move :: (chess: *Chess, move: Move16, fifty: int) -> int {
+    type := get_move16_flag(move);
+    from := get_move16_from(move);
 
-
-formosa_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
-
-    APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
-    milliseconds := to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);
-
-    seconds      := milliseconds / 1000;
-    minutes      := seconds      / 60;
-    hours        := minutes      / 60;
-    total_days   := hours        / 24;
-
-    milliseconds -= seconds      * 1000;
-    seconds      -= minutes      * 60;
-    minutes      -= hours        * 60;
-    hours        -= total_days   * 24;
-
-    years := total_days / 365;
-    leap_year_count := leap_years_before(years + 2);
-
-    years = (total_days - leap_year_count * 366) / 365;
-    years += leap_year_count;
-
-    days := total_days - (years - leap_year_count) * 365;
-    days -= leap_year_count * 366;
-
-    years += 1970;
-    is_leap_year := (years % 4 == 0) && (!(years % 100 == 0) || (years % 400 == 0));
-    if is_leap_year && days < 59 days += 1;
-
-    ct: Calendar_Time;
-
-    days_in_month := int.[
-        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
-    ];
-
-    month: int;
-    for days_in_month {
-        month += 1;
-
-        if days >= it {
-            days -= it;
-        } else {
-            month = xx it_index;
-            break;
-        }
+    piece_from := piece_at(chess, from);
+    if piece_from != .W_PAWN && piece_from != .B_PAWN && type == .Quiet then {
+        return fifty + 1;
     }
 
-    ct.year = xx years;
-    // is_leap_year := (ct.year % 4 == 0) && (!(ct.year % 100 == 0) || (ct.year % 400 == 0));
-    // if is_leap_year && month < 2 month_day += 1;
-
-    ct.day_of_week_starting_at_0 = xx ((4 + total_days) % 7);
-
-    ct.month_starting_at_0 = xx month;
-    ct.day_of_month_starting_at_0 = xx days;
-
-    ct.hour = xx hours;
-    ct.minute = xx minutes;
-    ct.second = xx seconds;
-    ct.millisecond = xx milliseconds;
-    return ct;
+    return 0;
 }
-
-leap_years_before :: (year: s64) -> s64 {
-    floor_div :: (dividend: int, $ divisor: int) -> int {
-        offset := cast(int) (dividend <= 0 && dividend % divisor);
-        return dividend / divisor - offset;
-    }
-
-    result := floor_div(year, 4) - floor_div(year, 100) + floor_div(year, 400);
-    return result;
-}
-
-#import "Pnm";

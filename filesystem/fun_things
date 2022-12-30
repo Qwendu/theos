@@ -1,0 +1,27 @@
+One fun thing you can do is see the commands that have resulted in the screen looking the way it
+did when you first booted.
+
+    read "system/startup"
+
+You can also assemble and run some fun programs.
+
+    read "code/welcome.asm"
+    assemble "code/welcome.asm", "welcome"
+    inspect_exe "programs/welcome"
+    welcome
+
+This will take the assembly code in "code/welcome.asm" and assemble it into a program called
+"welcome", which will be stored in "programs", with the other programs. You can then run it like
+normal, or inspect it with the inspect_exe program.
+
+Also try
+
+    view_image "pictures/florence.ppm"
+
+To add your own pictures to the pictures folder from the host operating system, put them in
+theos/filesystem/pictures, and run "jai-linux first.jai - no_kernel vdi".
+
+To do a challenging chess puzzle, type
+
+    list_directory "chess_files/puzzles"
+    read "chess_files/puzzles/morphy_isouard_1858" | chess HUMAN, CPU, 10

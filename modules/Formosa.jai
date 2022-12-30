@@ -367,6 +367,7 @@ get_message :: () -> Message {
 
     message: Message;
     target := *message;
+
     #asm {
         mov rbx: gpr === b, target;
         mov rax: gpr === a, GET_MESSAGE;

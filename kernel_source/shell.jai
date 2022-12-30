@@ -15,19 +15,25 @@ kernel_commands :: Kernel_Command.[
 
 cmd_get_memory_usage :: (args: .. Any) -> Any {
     Result_Type :: struct {
-        total: int; @Formosa.bytes
-        available: int; @Formosa.bytes
-        heap_used: int; @Formosa.bytes
+        total: int; @Formosa.cond(#=0) @Formosa.bytes
+        available: int; @Formosa.cond(#=0) @Formosa.bytes
+        virtual_watermark: int; @Formosa.cond(#=0) @Formosa.bytes
+        note: string;
     };
 
     mem := New([] Result_Type);
-    mem.count = 1;
-    mem.data = New(Result_Type);
+    mem.count = 2;
+    mem.data = map_memory(size_of(Result_Type) * 2);
 
     mem[0][0] = Result_Type.{
         total_memory,
         available_memory,
         cast(int) (cast(u64) heap_virtual_page_watermark * 0x1000 - HEAP_BASE),
+        "Virtual memory does not currently get deallocated.",
+    };
+
+    mem[0][1] = Result_Type.{
+        note = "The system will crash once it reaches 1GB",
     };
 
     return << mem;
@@ -1165,9 +1171,14 @@ print_ipc_data :: (value: Any) {
                             condition.count = note.count - "Formosa.cond(".count - 1;
 
                             success, member_name, value := split_from_left(condition, #char "=");
-                            assert(success, "you gotta");
+                            assert(success);
 
-                            for member: tis.members {
+                            if member_name == "#" {
+                                if index != string_to_int(value) {
+                                    length = 0;
+                                    break note;
+                                }
+                            } else for member: tis.members {
                                 if member.name == member_name {
                                     any: Any;
                                     any.type = member.type;
@@ -1245,9 +1256,16 @@ print_ipc_data :: (value: Any) {
                             condition.count = note.count - "Formosa.cond(".count - 1;
 
                             success, member_name, value := split_from_left(condition, #char "=");
-                            assert(success, "you gotta");
+                            assert(success);
 
-                            for member: tis.members {
+                            if member_name == "#" {
+                                if index != string_to_int(value) {
+                                    handled = true;
+                                    for 0..widths[column] - 1 print(" ");
+                                    to_print = "";
+                                    break note;
+                                }
+                            } else for member: tis.members {
                                 if member.name == member_name {
                                     any: Any;
                                     any.type = member.type;
