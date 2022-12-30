@@ -59,6 +59,7 @@ interrupt_handlers: [] struct {
 
     run_vm: bool;
     userspace: bool;
+    all_userspace: bool;
     no_kernel: bool;
     setup_vm: bool;
 
@@ -70,6 +71,7 @@ interrupt_handlers: [] struct {
 
           case "run_vm";     run_vm = true;
           case "user";       userspace = true;
+          case "user_all";   all_userspace = true;
           case "no_kernel";  no_kernel = true;
           case "setup_vm";   setup_vm = true;
           case "help";
@@ -88,7 +90,7 @@ interrupt_handlers: [] struct {
     }
 
     if setup_vm {
-        if run_vm || userspace || no_kernel {
+        if run_vm || userspace || no_kernel || all_userspace {
             write_string("Flags other than \"setup_vm\" are being ignored. You should compile and run using sequent commands.\n");
         }
 
@@ -139,7 +141,7 @@ interrupt_handlers: [] struct {
     }
 
     if run_vm {
-        if userspace || setup_vm || no_kernel {
+        if userspace || setup_vm || no_kernel || all_userspace {
             write_string("Flags other than \"run_vm\" are being ignored. You should compile and run using sequent commands.\n");
         }
 
@@ -258,7 +260,7 @@ interrupt_handlers: [] struct {
                 print_to_builder(*builder, "\tcli\n\tpush_all\n\tmov rdi, rsp\n\tcall %\n\tpop_all\n\tiretq\n\n", it.handler);
             }
 
-            write_entire_file(".build/interrupt.asm", builder_to_string(*builder));
+            try_to_write_file(".build/interrupt.asm", builder_to_string(*builder));
 
             shell("nasm .build/interrupt.asm -o .build/interrupt.so -f elf64 -wall");
         }
@@ -379,7 +381,7 @@ interrupt_handlers: [] struct {
             if !success {
                 write_string("objdump failed to run! (continuing)\n");
             }
-            else write_entire_file(".build/kernel_elf.objdump.txt", stdout);
+            else try_to_write_file(".build/kernel_elf.objdump.txt", xx stdout);
         }
 
         write_string("\n=== Reading ELF ===\n");
@@ -444,7 +446,7 @@ interrupt_handlers: [] struct {
                 }
 
                 kernel_size := builder_string_length(*kernel_binary);
-                write_entire_file(".build/kernel.bin", builder_to_string(*kernel_binary));
+                try_to_write_file(".build/kernel.bin", builder_to_string(*kernel_binary));
 
                 append(*generated_asm, tprint("  .count: dq 0x%\n\n", section_count));
 
@@ -453,7 +455,7 @@ interrupt_handlers: [] struct {
 
                 append(*generated_asm, tprint("kernel_sectors equ 0x%\n", kernel_sectors));
 
-                write_entire_file(".build/generated.asm", builder_to_string(*generated_asm));
+                try_to_write_file(".build/generated.asm", builder_to_string(*generated_asm));
             }
         }
 
@@ -463,7 +465,7 @@ interrupt_handlers: [] struct {
         }
     }
 
-    if userspace {
+    if userspace || all_userspace {
         write_string("\n=== Building Userspace ===\n");
         {
             make_directory_if_it_does_not_exist(".build/userspace");
@@ -504,15 +506,22 @@ interrupt_handlers: [] struct {
                 hash := sdbm_hash(source_code.data, source_code.count) ^ library_hash ^ build_program_hash;
                 array_add(*new_hashes, hash);
 
-                // if name != "example" continue filename;
-                for hashes if it == hash {
-                    continue filename;
+                if !all_userspace {
+                    // if name != "example" continue filename;
+                    for hashes if it == hash {
+                        continue filename;
+                    }
                 }
+
                 context.logger = (message: string, *void, Log_Info) {};
                 successful += cast(int) build_formosa_app(name);
                 recompiled += 1;
             }
-            write_entire_file(".build/userspace_app_hashes", new_hashes.data, new_hashes.count * 4);
+
+            cache_file: string;
+            cache_file.data = cast(*u8) new_hashes.data;
+            cache_file.count = new_hashes.count * 4;
+            try_to_write_file(".build/userspace_app_hashes", cache_file);
 
             if recompiled == 0 {
                 write_string("\n(no userspace applications needed to be recompiled.)\n");
@@ -524,6 +533,13 @@ interrupt_handlers: [] struct {
 
     write_string("\n=== Creating Raw Disk Image ===\n");
     {
+        if !file_exists(".build/boot_loader.bin") || !file_exists(".build/kernel.bin") {
+            write_string("Trying to build a bootable disk image, but the OS binaries have not been found.\n");
+            write_string("Did compilation fail, or did you erroneously run this build program with \" - no_kernel\"?\n");
+            write_string("(exiting.)\n\n");
+            return;
+        }
+
         DISK_SIZE :: 0x400_0000;
 
         disk_image := cast(*u8) alloc(DISK_SIZE);
@@ -571,8 +587,9 @@ interrupt_handlers: [] struct {
 
             (cast(*Fs_Data) user_data).current_time = info.modification_time;
 
-            if info.is_directory create_item(name, directory = true);
-            else {
+            if info.is_directory {
+                create_item(name, directory = true);
+            } else {
                 create_file(name);
                 content := read_entire_file(info.full_name);
                 write_file(name, cast([] u8) content);
@@ -582,10 +599,24 @@ interrupt_handlers: [] struct {
         flush_filesystem();
         make_directory_if_it_does_not_exist("disk_images");
 
-        write_entire_file("disk_images/formosa.img", disk_image, DISK_SIZE);
+        disk: string;
+        disk.data = disk_image;
+        disk.count = DISK_SIZE;
+        try_to_write_file("disk_images/formosa.img", disk);
     }
 
     write_string("\nIf all went well, this program has written a bootable disk image into \"disk_images/formosa.img\".\n");
+    if file_list("filesystem/programs").count == 0 {
+        write_string("\nHowever, there is no userspace! The OS will not do much. Consider running\n    jai-linux first.jai - user_all\n\n");
+    }
+}
+
+try_to_write_file :: (name: string, data: string) {
+    success := write_entire_file(name, cast(string) data);
+    if !success {
+        print("Failed to write file \"%\".\n(exiting.)\n", name);
+        exit(1);
+    }
 }
 
 assemble :: () -> bool {
@@ -597,7 +628,7 @@ assemble :: () -> bool {
         if !success {
             write_string("od failed to run! (continuing) \n");
         } else {
-            write_entire_file(".build/boot_loader.hex.txt", stdout);
+            try_to_write_file(".build/boot_loader.hex.txt", stdout);
         }
     }
 
