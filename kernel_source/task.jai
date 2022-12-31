@@ -281,6 +281,8 @@ Window :: struct {
     blitter: Blitter;
     shadow: Solid_Color;
 
+    backbuffer: *u32;
+
     owner: *Task_Info;
     exists: bool;
 }
@@ -310,6 +312,7 @@ create_window :: (width: int, height: int) -> Window_Handle {
         it.shadow.draw.x += 4;
         it.shadow.draw.y += 4;
 
+        it.backbuffer = map_memory(width * height * size_of(u32));
         return cast(Window_Handle) it_index;
     }
 

@@ -105,15 +105,8 @@ interrupt_handlers: [] struct {
         disk_inserted: bool;
 
         if exists {
-            lines := split(vminfo, cast(u8) #char "\n");
-            for lines {
-                field := split(it, cast(u8) #char "=");
-                if contains(field[0], "\"AHCI-0-0\"") {
-                    if !contains(field[1], "none") {
-                        shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
-                        break;
-                    }
-                }
+            if !vminfo_field_contains(vminfo, "\"AHCI-0-0\"", "none") {
+                shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
             }
 
             if file_exists("disk_images/formosa.vdi") {
@@ -151,6 +144,12 @@ interrupt_handlers: [] struct {
         }
 
         write_string("\n=== Running VirtualBox ===\n");
+        exists, vminfo := shell("VBoxManage showvminfo \"formosa\" --machinereadable", dont_quote = true, print_output = false);
+        if !exists {
+            write_string("\nThe VM could not be started because it wasn't found. You may choose to run    jai first.jai - setup_vm\n(exiting)\n");
+            return;
+        }
+
         success := shell("VBoxManage controlvm formosa poweroff", print_output = false);
 
         if success {
@@ -159,6 +158,12 @@ interrupt_handlers: [] struct {
             return;
         }
 
+        if !vminfo_field_contains(vminfo, "\"AHCI-0-0\"", "none") {
+            shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
+            shell("VBoxManage closemedium disk_images/formosa.vdi");
+        }
+
+        make_directory_if_it_does_not_exist("disk_images");
         disks := file_list("disk_images");
         vdi := array_find(disks, "disk_images/formosa.vdi");
         img := array_find(disks, "disk_images/formosa.img");
@@ -169,12 +174,9 @@ interrupt_handlers: [] struct {
         }
 
         if !vdi {
-            write_string("No VirtualBox VDI found, generating from \"disk_images/formosa.img\".\n");
+            write_string("\nNo VirtualBox VDI found, generating from \"disk_images/formosa.img\".\n\n");
             shell("VBoxManage convertfromraw --format VDI disk_images/formosa.img disk_images/formosa.vdi");
         } else {
-            shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
-            shell("VBoxManage closemedium disk_images/formosa.vdi");
-
             vdi_modtime := file_modtime_and_size("disk_images/formosa.vdi");
             img_modtime := file_modtime_and_size("disk_images/formosa.img");
 
@@ -206,27 +208,29 @@ interrupt_handlers: [] struct {
         print("However there's a chance it works anyway, so continuing\n");
     }
 
-    nasm_success := shell("nasm -v", print_output = false);
+    if !no_kernel {
+        nasm_success := shell("nasm -v", print_output = false);
 
-    if !nasm_success {
-        write_string("\nIt looks like Nasm is not installed on your Linux system.\n");
-        write_string("Nasm is required in order to assemble the bootloader.\n");
+        if !nasm_success {
+            write_string("\nIt looks like Nasm is not installed on your Linux system.\n");
+            write_string("Nasm is required in order to assemble the bootloader.\n");
 
-        os_name := read_entire_file("/etc/os-release");
-        if contains_nocase(os_name, "ubuntu") {
-            write_string("Since you are on Ubuntu, we will try to install the program. You may be prompted for root user credentials.\n\n");
+            os_name := read_entire_file("/etc/os-release");
+            if contains_nocase(os_name, "ubuntu") {
+                write_string("Since you are on Ubuntu, we will try to install the program. You may be prompted for root user credentials.\n\n");
 
-            result := shell("sudo apt install nasm", capture = true);
+                result := shell("sudo apt install nasm", capture = true);
 
-            if !result || !shell("nasm -v", print_output = false) {
-                write_string("\n\nIt appears that this has failed!\nPlease manually install the Nasm program. (exiting)\n");
+                if !result || !shell("nasm -v", print_output = false) {
+                    write_string("\n\nIt appears that this has failed!\nPlease manually install the Nasm program. (exiting)\n");
+                    return;
+                }
+
+                write_string("It appears that this was successful. Continuing.\n");
+            } else {
+                write_string("Since you do not appear to be on Ubuntu, please manually install the Nasm program. (exiting)\n");
                 return;
             }
-
-            write_string("It appears that this was successful. Continuing.\n");
-        } else {
-            write_string("Since you do not appear to be on Ubuntu, please manually install the Nasm program. (exiting)\n");
-            return;
         }
     }
 
@@ -513,10 +517,10 @@ interrupt_handlers: [] struct {
                 array_add(*new_hashes, hash);
 
                 if !all_userspace {
-                    // if name != "example" continue filename;
-                    for hashes if it == hash {
-                        continue filename;
-                    }
+                    if name != "olivec_demo" continue filename;
+                    // for hashes if it == hash {
+                    //     continue filename;
+                    // }
                 }
 
                 context.logger = (message: string, *void, Log_Info) {};
@@ -809,6 +813,18 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, defaul
 
     if !silent print("Successful patches: %\n", successful_patches);
     // for successful_patches
+}
+
+vminfo_field_contains :: (vminfo: string, field: string, value: string) -> bool {
+    lines := split(vminfo, cast(u8) #char "\n");
+    for lines {
+        f := split(it, cast(u8) #char "=");
+        if contains(f[0], field) {
+            return contains(f[1], value);
+        }
+    }
+
+    return false;
 }
 
 #import "Basic";

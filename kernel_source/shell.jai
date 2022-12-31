@@ -272,6 +272,8 @@ update_syntax_highlighting :: () {
 get_window_at :: (x: int, y: int) -> Window_Handle {
     hit := INVALID_WINDOW_HANDLE;
     for *windows {
+        if !it.exists continue;
+
         if (x > it.blitter.draw.x) && (x < it.blitter.draw.x + it.blitter.draw.width) && (y > it.blitter.draw.y) && (y < it.blitter.draw.y + it.blitter.draw.height) {
             if hit == INVALID_WINDOW_HANDLE {
                 hit = it_index;
@@ -762,6 +764,11 @@ shell_load_program :: (step: Command_Step) -> *Task_Info {
                     }
                 }
 
+                if !found {
+                    printf("Invalid enum value \"%\" for parameter %... possible values are %\n\n", it._string, it_index + 1, the_enum.names);
+                    return null;
+                }
+
                 args[it_index].value_pointer = *it.value;
                 args[it_index].type = type_table[it_index];
             } else {
@@ -924,7 +931,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
             }
 
             else {
-                generate_parse_error("Expected a parameter, but got token type %\n", tok.type);
+                generate_parse_error("Expected a parameter, but got token of type %\n", tok.type);
                 return false, steps, tokens;
             }
 
@@ -940,7 +947,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
             if tok.type == .EOT return true, steps, tokens;
 
             if tok.type != .VERTICAL_BAR {
-                generate_parse_error("Expected a comma or vertical bar, but got token type %\n", tok.type);
+                generate_parse_error("Expected a comma or vertical bar, but got token of type %\n", tok.type);
                 return false, steps, tokens;
             }
         }
@@ -963,7 +970,7 @@ Token :: struct {
     string_is_terminated: bool;
 
     Type :: enum {
-        NONE; IDENT; STRING; INT; COMMA; VERTICAL_BAR; POUND_SIGN; EOT; ERROR;
+        NONE; IDENT; STRING; INT; COMMA; VERTICAL_BAR; POUND_SIGN; EOT; ERROR_TOKEN;
     }
 
     Value :: union {
@@ -1069,7 +1076,7 @@ tokenize_command :: (command: string) -> [..] Token {
                 Emit(.IDENT, _string = ident);
             }
 
-            else Emit(.ERROR);
+            else Emit(.ERROR_TOKEN);
         }
     }
 

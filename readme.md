@@ -5,7 +5,7 @@
 
 VirtualBox or physical hardware is recommended over QEMU for performance reasons.
 You have to compile on linux. I usually compile in WSL and then run it on windows.
-- Compile, build userspace, and create a raw disk image: `jai-linux first.jai - user`  
+- Compile, build userspace, and create a bootable disk image: `jai-linux first.jai - user`  
 - Create a VirtualBox VM that has all the correct settings: `jai first.jai - setup_vm`
 - Run the created VirtualBox VM: `jai first.jai - run_vm`
 

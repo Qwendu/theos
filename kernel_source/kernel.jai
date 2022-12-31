@@ -2140,6 +2140,12 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             paint_screen();
 
           case REPAINT;
+            for windows {
+                if valid_alive_and_owned(it_index) {
+                    memcpy(it.blitter.source_surface.buffer, it.backbuffer, it.blitter.draw.width * it.blitter.draw.height * size_of(u32));
+                }
+            }
+
             entry := graphics.draw_list;
             while entry {
                 if entry.type == .BLITTER {
@@ -2159,7 +2165,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             if !w.exists return;
             if w.owner != current_task return;
 
-            << cast(**u32) data.rcx = w.blitter.source_surface.buffer;
+            << cast(**u32) data.rcx = w.backbuffer;
 
           case READ_FILE;
             name := << cast(*string) data.rcx;
@@ -2265,6 +2271,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 << cast(*int) data.rdi = windows[w].blitter.draw.width;
                 << cast(*int) data.rcx = windows[w].blitter.draw.height;
             }
+
 
           case;
             HexMode();

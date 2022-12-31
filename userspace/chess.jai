@@ -34,18 +34,18 @@ cvt_square :: (square: int) -> int {
     return x + y * 8;
 }
 
-Player_Kind :: enum {
-    CPU;
+Player :: enum {
+    CEIJ;
     HUMAN;
     RANDOM;
 }
 
 depth: int;
 
-main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, _depth: int) {
+main :: (white_pieces: Player, black_pieces: Player, _depth: int) {
     depth = _depth;
 
-    has_computer_player := (white_pieces == .CPU || black_pieces == .CPU);
+    has_computer_player := (white_pieces == .CEIJ || black_pieces == .CEIJ);
 
     repaint();
 
@@ -106,14 +106,14 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, _depth: int) {
     }
 }
 
-make_move :: (player: Player_Kind) -> bool {
+make_move :: (player: Player) -> bool {
     move: Move16;
 
-    if player == .CPU {
+    if player == .CEIJ {
         adjusted_depth := depth + cast(int) random_get() % 4;
         adjusted_depth = clamp(adjusted_depth, 1, 10);
 
-        move = search(*chess, clamp(depth, 1, 10), fifty);
+        move = search(*chess, clamp(adjusted_depth, 1, 10), fifty);
     } else if player == .HUMAN {
         move = human_move();
     } else {
@@ -204,7 +204,7 @@ human_move :: () -> Move16 {
     need_repaint: bool;
     while true {
         // output(ifx white_to_move "White to move!" else "Black to move!");
-        message := get_message();
+        message := wait_for_message();
 
         if message.kind == .KEYBOARD {
             if message.keyboard.key == .ESCAPE {
