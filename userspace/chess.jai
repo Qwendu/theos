@@ -40,7 +40,10 @@ Player_Kind :: enum {
     RANDOM;
 }
 
-main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
+depth: int;
+
+main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, _depth: int) {
+    depth = _depth;
 
     has_computer_player := (white_pieces == .CPU || black_pieces == .CPU);
 
@@ -96,121 +99,76 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
 
     while true {
         white_to_move = true;
-        if white_pieces == .CPU {
-            adjusted_depth := depth + cast(int) random_get() % 4;
-            adjusted_depth = clamp(adjusted_depth, 1, 10);
-
-            if !computer_move(adjusted_depth) return;
-        } else if white_pieces == .HUMAN {
-            if !human_move() return;
-        } else {
-            if !move_maker_9000() return;
-        }
-
-        if check_win_condition() return;
-        if check_for_repetition(*chess, fifty) {
-            write_string("Draw! (repetition)\n");
-            return;
-        }
-
-        trivial, score := trivial_evaluation(*chess, fifty);
-        if trivial && score == 0 {
-            write_string("Draw! (material)\n");
-            return;
-        }
+        if !make_move(white_pieces) return;
 
         white_to_move = false;
-        if black_pieces == .CPU {
-            adjusted_depth := depth + cast(int) random_get() % 4;
-            adjusted_depth = clamp(adjusted_depth, 1, 10);
-
-            if !computer_move(adjusted_depth) return;
-        } else if black_pieces == .HUMAN {
-            if !human_move() return;
-        } else {
-            if !move_maker_9000() return;
-        }
-
-        if check_win_condition() return;
-        if check_for_repetition(*chess, fifty) {
-            write_string("Draw! (repetition)\n");
-            return;
-        }
- 
-        trivial, score = trivial_evaluation(*chess, fifty);
-        if trivial && score == 0 {
-            write_string("Draw! (material)\n");
-            return;
-        }
+        if !make_move(black_pieces) return;
     }
 }
 
-write_fen :: () {
-    piece_table :: " KQRBNPkqrbnp";
+make_move :: (player: Player_Kind) -> bool {
+    move: Move16;
 
-    space: [128] u8;
-    cursor: int;
+    if player == .CPU {
+        adjusted_depth := depth + cast(int) random_get() % 4;
+        adjusted_depth = clamp(adjusted_depth, 1, 10);
 
-    empty_count: int;
-    for < chess.pieces {
-        index := 63 - it_index;
-        if index && index % 8 == 0 {
-            if empty_count {
-                space[cursor] = cast(u8) (#char "0" + empty_count);
-                empty_count = 0;
-                cursor += 1;
+        move = search(*chess, clamp(depth, 1, 10), fifty);
+    } else if player == .HUMAN {
+        move = human_move();
+    } else {
+        moves_arr: [..] Move16;
+        generate_moves(*chess, *moves_arr);
+        index := random_get() % cast(u64) moves_arr.count;
+        move = moves_arr[index];
+    }
+
+    make_move(*chess, move);
+    fifty = fifty_move(*chess, move, fifty);
+
+
+    type, from, to := decode_move16(move);
+
+    using Move16;
+    if type & (King_Castle | Queen_Castle | Ep_Capture) {
+        draw_board();
+    } else {
+        old := last_move_square;
+        last_move_square = cvt_square(to);
+        draw_square(old);
+        draw_square(last_move_square);
+        draw_square(cvt_square(from));
+    }
+
+    repaint();
+
+
+
+    if check_win_condition() return false;
+    if check_for_repetition(*chess, fifty) {
+        write_string("Draw! (repetition)\n");
+        return false;
+    }
+    
+    trivial, score := trivial_evaluation(*chess, fifty);
+    if trivial && score == 0 {
+        write_string("Draw! (material)\n");
+        return false;
+    }
+
+
+
+    message := get_message();
+    while message.kind != .NONE {
+        if message.kind == .KEYBOARD {
+            if message.keyboard.key == .ESCAPE {
+                return false;
             }
-
-            space[cursor] = #char "/";
-            cursor += 1;
         }
-
-        if it == .NONE {
-            empty_count += 1;
-            continue;
-        } else if empty_count {
-            space[cursor] = cast(u8) (#char "0" + empty_count);
-            empty_count = 0;
-            cursor += 1;
-        }
-
-        space[cursor] = piece_table[cast(int) it];
-        cursor += 1;
+        message = get_message();
     }
- 
-    space[cursor] = #char " ";
-    cursor += 1;
-    space[cursor] = cast(u8) ifx white_to_move #char "w" else #char "b";
-    cursor += 1;
-    space[cursor] = #char " ";
-    cursor += 1;
-    space[cursor] = #char "-";
-    cursor += 1;
-    space[cursor] = #char " ";
-    cursor += 1;
-    space[cursor] = #char "-";
-    cursor += 1;
-    space[cursor] = #char " ";
-    cursor += 1;
-    space[cursor] = #char "0";
-    cursor += 1;
-    space[cursor] = #char " ";
-    cursor += 1;
-    space[cursor] = #char "0";
 
-    apollo := conv(formosa_get_time());
-    ct := formosa_apollo_to_calendar(apollo);
-    filename := tprint("chess_files/games/%1%2%3", ct.hour, ct.minute, ct.second);
-
-    create_file(filename);
-
-    content: string;
-    content.data = space.data;
-    content.count = cursor;
-    result := write_file(filename, xx content);
-    if result != .success {
-        write_string("Failed to save game! Could not write file.\n");
-    }
+    return true;
 }
 
 white_to_move: bool;
@@ -239,74 +197,7 @@ clamp :: (value: int, min: int, max: int) -> int {
     return value;
 }
 
-computer_move :: (depth: int) -> bool {
-    move := search(*chess, clamp(depth, 1, 10), fifty);
-    make_move(*chess, move);
-
-    fifty = fifty_move(*chess, move, fifty);
-
-    message := get_message();
-    while message.kind != .NONE {
-        if message.kind == .KEYBOARD {
-            if message.keyboard.key == .ESCAPE {
-                return false;
-            }
-        }
-        message = get_message();
-    }
-
-    type, from, to := decode_move16(move);
-
-    using Move16;
-    if type & (King_Castle | Queen_Castle | Ep_Capture) {
-        draw_board();
-    }
-
-    old := last_move_square;
-    last_move_square = cvt_square(to);
-    draw_square(old);
-    draw_square(last_move_square);
-    draw_square(cvt_square(from));
-    repaint();
-
-    return true;
-}
-
-move_maker_9000 :: () -> bool {
-    moves_arr: [..] Move16;
-    generate_moves(*chess, *moves_arr);
-    index := random_get() % cast(u64) moves_arr.count;
-
-    make_move(*chess, moves_arr[index]);
-
-    type, from, to := decode_move16(moves_arr[index]);
-
-    using Move16;
-    if type & (King_Castle | Queen_Castle | Ep_Capture) {
-        draw_board();
-    }
-
-    old := last_move_square;
-    last_move_square = cvt_square(to);
-    draw_square(old);
-    draw_square(last_move_square);
-    draw_square(cvt_square(from));
-    repaint();
-
-    message := get_message();
-    while message.kind != .NONE {
-        if message.kind == .KEYBOARD {
-            if message.keyboard.key == .ESCAPE {
-                return false;
-            }
-        }
-        message = get_message();
-    }
-
-    return true;
-}
-
-human_move :: () -> bool {
+human_move :: () -> Move16 {
     moves_arr: [..] Move16;
     generate_moves(*chess, *moves_arr);
 
@@ -317,7 +208,7 @@ human_move :: () -> bool {
 
         if message.kind == .KEYBOARD {
             if message.keyboard.key == .ESCAPE {
-                return false;
+                exit(0);
             }
             if message.keyboard.type == .RELEASED continue;
             need_repaint = true;
@@ -353,18 +244,7 @@ human_move :: () -> bool {
                     for moves_arr {
                         flags, legal_from, legal_to := decode_move16(it);
                         if legal_from == from && legal_to == to {
-                            make_move(*chess, it);
-
-                            fifty = fifty_move(*chess, move, fifty);
-
-                            draw_square(cvt_square(from));
-                            draw_square(selected_square);
-
-                            using Move16;
-                            if flags & (King_Castle | Queen_Castle | Ep_Capture) {
-                                draw_board();
-                            }
-                            return true;
+                            return it;
                         }
                     }
                     draw_square(cvt_square(from));
@@ -379,7 +259,8 @@ human_move :: () -> bool {
         }
     }
 
-    return false;
+    assert(false);
+    return 0;
 }
 
 draw_board :: () {
@@ -475,4 +356,76 @@ fifty_move :: (chess: *Chess, move: Move16, fifty: int) -> int {
     }
 
     return 0;
+}
+
+
+
+
+
+write_fen :: () {
+    piece_table :: " KQRBNPkqrbnp";
+
+    space: [128] u8;
+    cursor: int;
+
+    empty_count: int;
+    for < chess.pieces {
+        index := 63 - it_index;
+        if index && index % 8 == 0 {
+            if empty_count {
+                space[cursor] = cast(u8) (#char "0" + empty_count);
+                empty_count = 0;
+                cursor += 1;
+            }
+
+            space[cursor] = #char "/";
+            cursor += 1;
+        }
+
+        if it == .NONE {
+            empty_count += 1;
+            continue;
+        } else if empty_count {
+            space[cursor] = cast(u8) (#char "0" + empty_count);
+            empty_count = 0;
+            cursor += 1;
+        }
+
+        space[cursor] = piece_table[cast(int) it];
+        cursor += 1;
+    }
+ 
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = cast(u8) ifx white_to_move #char "w" else #char "b";
+    cursor += 1;
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = #char "-";
+    cursor += 1;
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = #char "-";
+    cursor += 1;
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = #char "0";
+    cursor += 1;
+    space[cursor] = #char " ";
+    cursor += 1;
+    space[cursor] = #char "0";
+
+    apollo := conv(formosa_get_time());
+    ct := formosa_apollo_to_calendar(apollo);
+    filename := tprint("chess_files/games/%1%2%3", ct.hour, ct.minute, ct.second);
+
+    create_file(filename);
+
+    content: string;
+    content.data = space.data;
+    content.count = cursor;
+    result := write_file(filename, xx content);
+    if result != .success {
+        write_string("Failed to save game! Could not write file.\n");
+    }
 }
