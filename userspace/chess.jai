@@ -110,6 +110,12 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
             return;
         }
 
+        trivial, score := trivial_evaluation(*chess, fifty);
+        if trivial && score == 0 {
+            write_string("Draw! (material)\n");
+            return;
+        }
+
         white_to_move = false;
         if black_pieces == .CPU {
             adjusted_depth := depth + cast(int) random_get() % 4;
@@ -125,7 +131,12 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
             write_string("Draw! (repetition)\n");
             return;
         }
-
+ 
+        trivial, score = trivial_evaluation(*chess, fifty);
+        if trivial && score == 0 {
+            write_string("Draw! (material)\n");
+            return;
+        }
     }
 }
 
@@ -161,7 +172,7 @@ write_fen :: () {
         space[cursor] = piece_table[cast(int) it];
         cursor += 1;
     }
-
+ 
     space[cursor] = #char " ";
     cursor += 1;
     space[cursor] = cast(u8) ifx white_to_move #char "w" else #char "b";
@@ -205,12 +216,12 @@ check_win_condition :: () -> bool {
 
     check := in_check(*chess.chess);
     if check && moves_arr.count == 0 {
-        write_string("Checkmate!\n");
+        print("Checkmate! % wins\n", ifx white_to_move then "White" else "Black");
         return true;
     }
 
     if !check && moves_arr.count == 0 {
-        write_string("Stalemate!\n");
+        write_string("Draw! (stalemate)\n");
         return true;
     }
 

@@ -39,42 +39,8 @@ Boot_Data :: struct {
     boot_drive_number: u8;
     memory_map_size: u16;
     memory_map: *Bios_Memory_Map_Entry;
-
-    boot_drive_parameters: struct {
-        buffer_size:      u16;
-        info_flags:       u16;
-        num_cylinders:    u32;
-        num_heads:        u32;
-        num_sectors:      u32;
-        sector_count:     u64;
-        bytes_per_sector: u16;
-
-        edd_config_params: u32 #align 2;
-
-        device_path_info_is_present_signature: u16; // 0xbedd
-        device_path_info_length: u8;
-        reserved: [3] u8;
-
-        host_bus_name: enum u32 {
-            ISA :: 0x20415349;
-            PCI :: 0x20494350;
-        };
-
-        interface_type_name: [8] u8;
-
-        interface_path: union {
-            isa_base_address: u16;
-            pci_address: struct { bus, device, func: u8; };
-            _padding: [8] u8;
-        };
-        device_path: u64;
-
-        reserved_2: u8;
-        checksum: u8;
-    } #no_padding
 }
 
-#assert(size_of(type_of(boot_data.boot_drive_parameters)) == 0x42);
 #assert(size_of(Boot_Data) < BOOT_DATA_SIZE / 2);
 
 boot_data: Boot_Data;
@@ -2021,7 +1987,6 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
     get_message :: () -> Message {
         msg: Message;
         msg.kind = .NONE;
-
 
         event, success := read_event_buffer(*current_task.parent_process.input);
         if success {

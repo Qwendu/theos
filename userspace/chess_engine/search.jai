@@ -1307,23 +1307,22 @@ make_move :: (c: *ChessGame, move: Move16) -> Piece, Castling {
     bk := bit_scan_forward(c.b_king);
     wk := bit_scan_forward(c.w_king);
     if to == bk || to == wk {
-        write_string("KING CAN BE CAPTURED");
-//      write_string("Error. King can be captured.\n");
-//      print_chess(c);
-//      print_move(move);
-//      mov := pop(*c.moves);
-//      unmake_move(c, mov.mov16, 0, c.castling);
-//      print_chess(c);
-//      print_move(mov.mov16);
-//
-//
-//      mov = pop(*c.moves);
-//      unmake_move(c, mov.mov16, 0, c.castling);
-//      print_chess(c);
-//      print_move(mov.mov16);
-//
-//
-//      assert(false);
+        write_string("Error. King can be captured.\n");
+        print_chess(c);
+        print_move(move);
+        mov := pop(*c.moves);
+        unmake_move(c, mov.mov16, 0, c.castling);
+        print_chess(c);
+        print_move(mov.mov16);
+  
+  
+        mov = pop(*c.moves);
+        unmake_move(c, mov.mov16, 0, c.castling);
+        print_chess(c);
+        print_move(mov.mov16);
+  
+  
+        assert(false);
     }
   }
 

@@ -75,6 +75,8 @@ nnue_evaluate :: (chess: *ChessGame) -> int {
   return __nnue_evaluate_incr(xx chess.turn, *pieces[0], *squares[0], *a_nnue[0]);
 }
 
+#scope_export
+
 // We use trivial evaluation to deal with endgame positions.
 trivial_evaluation :: (using chess: *Chess, fifty: int) -> bool, int {
   // used for trivial checkmates/draws.

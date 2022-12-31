@@ -91,7 +91,7 @@ interrupt_handlers: [] struct {
 
     if setup_vm {
         if run_vm || userspace || no_kernel || all_userspace {
-            write_string("Flags other than \"setup_vm\" are being ignored. You should compile and run using sequent commands.\n");
+            write_string("Flags other than \"setup_vm\" are being ignored. You should compile, setup, and run using separate invocations of this program.\n");
         }
 
         if is_wsl {
@@ -141,8 +141,8 @@ interrupt_handlers: [] struct {
     }
 
     if run_vm {
-        if userspace || setup_vm || no_kernel || all_userspace {
-            write_string("Flags other than \"run_vm\" are being ignored. You should compile and run using sequent commands.\n");
+        if userspace || no_kernel || all_userspace {
+            write_string("Flags other than \"run_vm\" are being ignored. You should compile and run using separate invocations of this program.\n");
         }
 
         if is_wsl {
@@ -151,14 +151,20 @@ interrupt_handlers: [] struct {
         }
 
         write_string("\n=== Running VirtualBox ===\n");
-        shell("VBoxManage controlvm formosa poweroff");
+        success := shell("VBoxManage controlvm formosa poweroff", print_output = false);
+
+        if success {
+            write_string("\nThe VM was already running, turning off.\n");
+            write_string("(exiting)\n");
+            return;
+        }
 
         disks := file_list("disk_images");
         vdi := array_find(disks, "disk_images/formosa.vdi");
         img := array_find(disks, "disk_images/formosa.img");
 
         if !img && !vdi {
-            write_string("There is no disk image! You must compile before you run. See readme.md (exiting.)\n");
+            write_string("There is no disk image! You must compile before you run. See readme.md (exiting)\n");
             return;
         }
 
@@ -203,7 +209,7 @@ interrupt_handlers: [] struct {
     nasm_success := shell("nasm -v", print_output = false);
 
     if !nasm_success {
-        write_string("\nIt looks like \"nasm\" is not installed on your Linux system.\n");
+        write_string("\nIt looks like Nasm is not installed on your Linux system.\n");
         write_string("Nasm is required in order to assemble the bootloader.\n");
 
         os_name := read_entire_file("/etc/os-release");
@@ -213,13 +219,13 @@ interrupt_handlers: [] struct {
             result := shell("sudo apt install nasm", capture = true);
 
             if !result || !shell("nasm -v", print_output = false) {
-                write_string("\n\nIt appears that this has failed!\nPlease install the Nasm package in the way that is usual for your Linux system. (exiting)\n");
+                write_string("\n\nIt appears that this has failed!\nPlease manually install the Nasm program. (exiting)\n");
                 return;
             }
 
             write_string("It appears that this was successful. Continuing.\n");
         } else {
-            write_string("Since you do not appear to be on Ubuntu, please install the Nasm package in the way that is usual for your Linux system. (exiting)\n");
+            write_string("Since you do not appear to be on Ubuntu, please manually install the Nasm program. (exiting)\n");
             return;
         }
     }
@@ -309,7 +315,6 @@ interrupt_handlers: [] struct {
             ];
             set_linker_script(*options, w, script);
 
-            // Don't know if these do anything
             // options.llvm_options.target_system_triple = "x86_64-unknown-none-elf";
             // options.os_target = .NONE;
 
@@ -360,7 +365,7 @@ interrupt_handlers: [] struct {
             linker_fail: bool;
             for all_messages {
                 if it.kind == .ERROR {
-                    write_string("Kernel Compilation Failure!\n");
+                    write_string("\nKernel Compilation Failure! (exiting)\n");
                     return;
                 }
 
@@ -380,11 +385,12 @@ interrupt_handlers: [] struct {
             success, stdout, stderr := shell(objdump_command, print_output = false);
             if !success {
                 write_string("objdump failed to run! (continuing)\n");
+            } else {
+                write_entire_file(".build/kernel_elf.objdump.txt", stdout);
             }
-            else try_to_write_file(".build/kernel_elf.objdump.txt", xx stdout);
         }
 
-        write_string("\n=== Reading ELF ===\n");
+        write_string("\n=== Patching ELF ===\n");
         {
             header_printer := context;
             header_printer.print_style.default_format_int.base = 16;
@@ -535,8 +541,12 @@ interrupt_handlers: [] struct {
     {
         if !file_exists(".build/boot_loader.bin") || !file_exists(".build/kernel.bin") {
             write_string("Trying to build a bootable disk image, but the OS binaries have not been found.\n");
-            write_string("Did compilation fail, or did you erroneously run this build program with \" - no_kernel\"?\n");
-            write_string("(exiting.)\n\n");
+            if no_kernel {
+                write_string("Did you erroneously run this build program with \" - no_kernel\"?\n");
+            } else {
+                write_string("Was there a failure, earlier in the program?\n");
+            }
+            write_string("(exiting)\n\n");
             return;
         }
 
@@ -614,7 +624,7 @@ interrupt_handlers: [] struct {
 try_to_write_file :: (name: string, data: string) {
     success := write_entire_file(name, cast(string) data);
     if !success {
-        print("Failed to write file \"%\".\n(exiting.)\n", name);
+        print("Failed to write file \"%\".\n(exiting)\n", name);
         exit(1);
     }
 }
@@ -628,13 +638,12 @@ assemble :: () -> bool {
         if !success {
             write_string("od failed to run! (continuing) \n");
         } else {
-            try_to_write_file(".build/boot_loader.hex.txt", stdout);
+            write_entire_file(".build/boot_loader.hex.txt", stdout);
         }
     }
 
     return true;
 }
-
 
 shell :: (format: string, args: .. Any, print_output := true, dont_quote := false, capture := true, silent := false) -> bool, string, string {
     command := tprint(format, .. args);
