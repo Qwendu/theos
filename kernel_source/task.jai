@@ -120,7 +120,7 @@ new_task_start :: () #no_context {
     }
 }
 
-make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size := 0x1_0000) -> *Task_Info {
+make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size := 0x10_0000) -> *Task_Info {
     task := cast(*Task_Info) map_memory(size_of(Task_Info));
 
     task.stack_bottom = map_memory(stack_size) + stack_size;

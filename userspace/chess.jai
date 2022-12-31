@@ -1,4 +1,4 @@
- 
+
 #import "Formosa";
 #import "Formosa_Utilities";
 #import "Pnm";
@@ -37,6 +37,7 @@ cvt_square :: (square: int) -> int {
 Player_Kind :: enum {
     CPU;
     HUMAN;
+    RANDOM;
 }
 
 main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
@@ -100,8 +101,10 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
             adjusted_depth = clamp(adjusted_depth, 1, 10);
 
             if !computer_move(adjusted_depth) return;
-        } else {
+        } else if white_pieces == .HUMAN {
             if !human_move() return;
+        } else {
+            if !move_maker_9000() return;
         }
 
         if check_win_condition() return;
@@ -122,8 +125,10 @@ main :: (white_pieces: Player_Kind, black_pieces: Player_Kind, depth: int) {
             adjusted_depth = clamp(adjusted_depth, 1, 10);
 
             if !computer_move(adjusted_depth) return;
-        } else {
+        } else if black_pieces == .HUMAN {
             if !human_move() return;
+        } else {
+            if !move_maker_9000() return;
         }
 
         if check_win_condition() return;
@@ -267,6 +272,40 @@ computer_move :: (depth: int) -> bool {
     return true;
 }
 
+move_maker_9000 :: () -> bool {
+    moves_arr: [..] Move16;
+    generate_moves(*chess, *moves_arr);
+    index := random_get() % cast(u64) moves_arr.count;
+
+    make_move(*chess, moves_arr[index]);
+
+    type, from, to := decode_move16(moves_arr[index]);
+
+    using Move16;
+    if type & (King_Castle | Queen_Castle | Ep_Capture) {
+        draw_board();
+    }
+
+    old := last_move_square;
+    last_move_square = cvt_square(to);
+    draw_square(old);
+    draw_square(last_move_square);
+    draw_square(cvt_square(from));
+    repaint();
+
+    message := get_message();
+    while message.kind != .NONE {
+        if message.kind == .KEYBOARD {
+            if message.keyboard.key == .ESCAPE {
+                return false;
+            }
+        }
+        message = get_message();
+    }
+
+    return true;
+}
+
 human_move :: () -> bool {
     moves_arr: [..] Move16;
     generate_moves(*chess, *moves_arr);
@@ -339,6 +378,8 @@ human_move :: () -> bool {
             // yield();
         }
     }
+
+    return false;
 }
 
 draw_board :: () {

@@ -220,7 +220,7 @@ find_info_node :: (path: [] string) -> Info_Node_Loc, bool {
     defer free(current_info_node_block);
 
     for step: path {
-        assert(step.count < 32);
+        assert(step.count < 32, tprint("File name too long: %, in the future arbitrary length filenames will be supported", step));
         // Read the directory blocks of the current info node and iterate them to find the next directory info node
         read_block(loc.block, current_info_node_block, fs_user_data);
         current_info_node := cast(*Info_Node) current_info_node_block + loc.index;
@@ -319,7 +319,7 @@ create_item :: (path_string: string, directory: bool) -> Filesystem_Result {
         new_entry := cast(*Directory_Entry) block + new_entry_index;
         << new_entry = .{};
 
-        assert(name.count < 32);
+        assert(name.count < 32, tprint("File name too long: %, in the future arbitrary length filenames will be supported", name));
         memcpy(new_entry.name.data, name.data, name.count);
 
         new_node_block := cast(*Info_Node) alloc(FS_BLOCKSIZE);
