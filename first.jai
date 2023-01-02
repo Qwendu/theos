@@ -1,4 +1,13 @@
 
+#import "Basic";
+#import "Compiler";
+#import "Process";
+#import "File";
+#import "File_Utilities";
+#import "String";
+#import "System";
+#import "Hash";
+
 #import,file "modules/Nasm.jai";
 #import,file "modules/Elf.jai";
 #import,file "modules/Formosa_Filesystem.jai";
@@ -62,13 +71,19 @@ interrupt_handlers: [] struct {
     all_userspace: bool;
     no_kernel: bool;
     setup_vm: bool;
+    always: bool;
+
+    compile_specific_app: string;
 
     for user_args {
-        if it == {
+        if starts_with(it, "app=") {
+            compile_specific_app = split(it, cast(u8) #char "=")[1];
+        }
+
+        else if it == {
           case "assemble";
             assemble();
             return;
-
           case "run_vm";     run_vm = true;
           case "user";       userspace = true;
           case "user_all";   all_userspace = true;
@@ -78,19 +93,28 @@ interrupt_handlers: [] struct {
             print("\nSee readme.md.\n\n");
             return;
           case;
-            print("Error: did not understand command line argument \"%\".\nSee https://github.com/dlandahl/theos/readme.md\n\n", it);
+            print("Error: did not understand command line argument \"%\". See readme.md\n", it);
+            write_string("(exiting.)\n");
             return;
         }
     }
 
+    version_info: Version_Info;
+    compiler_get_version_info(*version_info);
+    if memcmp(*version_info, *Version_Info.{0, 1, 50}, size_of(Version_Info)) != 0 {
+        using version_info;
+        print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.050, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
+        print("However there's a chance it works anyway, so continuing\n");
+    }
+
     is_wsl := false;
     #if OS == .LINUX {
-        success, output := shell("uname -a", print_output = false);
+        success, output := shell("uname --kernel-release", print_output = false);
         is_wsl = contains_nocase(output, "microsoft");
     }
 
     if setup_vm {
-        if run_vm || userspace || no_kernel || all_userspace {
+        if run_vm || userspace || no_kernel || all_userspace || compile_specific_app.count {
             write_string("Flags other than \"setup_vm\" are being ignored. You should compile, setup, and run using separate invocations of this program.\n");
         }
 
@@ -101,10 +125,22 @@ interrupt_handlers: [] struct {
 
         write_string("\n=== Creating VM ===\n");
 
+        vbox_installed := shell("VBoxManage --version", print_output = false);
+        if !vbox_installed {
+            write_string("It appears that VirtualBox is not installed on your computer. You must install it, or boot the OS on a different system.\n");
+            write_string("(exiting.)\n");
+            return;
+        }
+
         exists, vminfo := shell("VBoxManage showvminfo \"formosa\" --machinereadable", dont_quote = true, print_output = false);
         disk_inserted: bool;
 
         if exists {
+            if !vminfo_field_contains(vminfo, "VMState", "poweroff") {
+                write_string("\nThe VirtualBox VM is currently running. Please shut it down and try again.\n");
+                return;
+            }
+
             if !vminfo_field_contains(vminfo, "\"AHCI-0-0\"", "none") {
                 shell("VBoxManage storageattach formosa --storagectl AHCI --port 0 --medium none --device 0");
             }
@@ -128,13 +164,14 @@ interrupt_handlers: [] struct {
         shell("VBoxManage modifyvm formosa --biosbootmenu disabled");
         shell("VBoxManage setextradata formosa \"CustomVideoMode1\" \"2560x1440x32\"", dont_quote = true);
         shell("VBoxManage setextradata formosa \"CustomVideoMode2\" \"1920x1080x32\"", dont_quote = true);
+        shell("VBoxManage setextradata formosa \"CustomVideoMode3\" \"1440x900x32\"", dont_quote = true);
         shell("VBoxManage setextradata formosa GUI/MaxGuestResolution any");
         shell("VBoxManage setextradata formosa GUI/DefaultCloseAction PowerOff");
         return;
     }
 
     if run_vm {
-        if userspace || no_kernel || all_userspace {
+        if userspace || no_kernel || all_userspace || compile_specific_app.count {
             write_string("Flags other than \"run_vm\" are being ignored. You should compile and run using separate invocations of this program.\n");
         }
 
@@ -144,17 +181,25 @@ interrupt_handlers: [] struct {
         }
 
         write_string("\n=== Running VirtualBox ===\n");
-        exists, vminfo := shell("VBoxManage showvminfo \"formosa\" --machinereadable", dont_quote = true, print_output = false);
-        if !exists {
-            write_string("\nThe VM could not be started because it wasn't found. You may choose to run    jai first.jai - setup_vm\n(exiting)\n");
+        
+        vbox_installed := shell("VBoxManage --version", print_output = false);
+        if !vbox_installed {
+            write_string("It appears that VirtualBox is not installed on your computer. You must install it, or boot the OS on a different system.\n");
+            write_string("(exiting.)\n");
             return;
         }
 
-        success := shell("VBoxManage controlvm formosa poweroff", print_output = false);
+        exists, vminfo := shell("VBoxManage showvminfo \"formosa\" --machinereadable", dont_quote = true, print_output = false);
+        if !exists {
+            write_string("\nThe VM could not be started because it wasn't found. You may choose to run    jai first.jai - setup_vm\n(exiting.)\n");
+            return;
+        }
 
-        if success {
+        was_running := shell("VBoxManage controlvm formosa poweroff", print_output = false);
+
+        if was_running {
             write_string("\nThe VM was already running, turning off.\n");
-            write_string("(exiting)\n");
+            write_string("(exiting.)\n");
             return;
         }
 
@@ -169,12 +214,12 @@ interrupt_handlers: [] struct {
         img := array_find(disks, "disk_images/formosa.img");
 
         if !img && !vdi {
-            write_string("There is no disk image! You must compile before you run. See readme.md (exiting)\n");
+            write_string("There is no disk image! You must compile before you run. See readme.md (exiting.)\n");
             return;
         }
 
         if !vdi {
-            write_string("\nNo VirtualBox VDI found, generating from \"disk_images/formosa.img\".\n\n");
+            write_string("\nNo VirtualBox disk (VDI) found, generating from \"disk_images/formosa.img\".\n\n");
             shell("VBoxManage convertfromraw --format VDI disk_images/formosa.img disk_images/formosa.vdi");
         } else {
             vdi_modtime := file_modtime_and_size("disk_images/formosa.vdi");
@@ -200,14 +245,6 @@ interrupt_handlers: [] struct {
         return;
     }
 
-    version_info: Version_Info;
-    compiler_get_version_info(*version_info);
-    if memcmp(*version_info, *Version_Info.{0, 1, 49}, size_of(Version_Info)) != 0 {
-        using version_info;
-        print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.049, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
-        print("However there's a chance it works anyway, so continuing\n");
-    }
-
     if !no_kernel {
         nasm_success := shell("nasm -v", print_output = false);
 
@@ -222,13 +259,13 @@ interrupt_handlers: [] struct {
                 result := shell("sudo apt install nasm", capture = true);
 
                 if !result || !shell("nasm -v", print_output = false) {
-                    write_string("\n\nIt appears that this has failed!\nPlease manually install the Nasm program. (exiting)\n");
+                    write_string("\n\nIt appears that this has failed!\nPlease manually install the Nasm program. (exiting.)\n");
                     return;
                 }
 
                 write_string("It appears that this was successful. Continuing.\n");
             } else {
-                write_string("Since you do not appear to be on Ubuntu, please manually install the Nasm program. (exiting)\n");
+                write_string("Since you do not appear to be on Ubuntu, please manually install the Nasm program. (exiting.)\n");
                 return;
             }
         }
@@ -369,7 +406,7 @@ interrupt_handlers: [] struct {
             linker_fail: bool;
             for all_messages {
                 if it.kind == .ERROR {
-                    write_string("\nKernel Compilation Failure! (exiting)\n");
+                    write_string("\nKernel Compilation Failure! (exiting.)\n");
                     return;
                 }
 
@@ -475,7 +512,7 @@ interrupt_handlers: [] struct {
         }
     }
 
-    if userspace || all_userspace {
+    if userspace || all_userspace || compile_specific_app.count {
         write_string("\n=== Building Userspace ===\n");
         {
             make_directory_if_it_does_not_exist(".build/userspace");
@@ -517,10 +554,13 @@ interrupt_handlers: [] struct {
                 array_add(*new_hashes, hash);
 
                 if !all_userspace {
-                    if name != "olivec_demo" continue filename;
-                    // for hashes if it == hash {
-                    //     continue filename;
-                    // }
+                    if compile_specific_app.count {
+                        if name != compile_specific_app {
+                            continue filename;
+                        }
+                    } else for hashes if it == hash {
+                        continue filename;
+                    }
                 }
 
                 context.logger = (message: string, *void, Log_Info) {};
@@ -541,16 +581,16 @@ interrupt_handlers: [] struct {
         }
     }
 
-    write_string("\n=== Creating Raw Disk Image ===\n");
+    write_string("\n=== Creating Disk Image ===\n");
     {
         if !file_exists(".build/boot_loader.bin") || !file_exists(".build/kernel.bin") {
-            write_string("Trying to build a bootable disk image, but the OS binaries have not been found.\n");
+            write_string("Trying to create a bootable disk image, but the OS binaries have not been found.\n");
             if no_kernel {
                 write_string("Did you erroneously run this build program with \" - no_kernel\"?\n");
             } else {
-                write_string("Was there a failure, earlier in the program?\n");
+                write_string("Was there a failure earlier in the build process?\n");
             }
-            write_string("(exiting)\n\n");
+            write_string("(exiting.)\n\n");
             return;
         }
 
@@ -628,7 +668,7 @@ interrupt_handlers: [] struct {
 try_to_write_file :: (name: string, data: string) {
     success := write_entire_file(name, cast(string) data);
     if !success {
-        print("Failed to write file \"%\".\n(exiting)\n", name);
+        print("Failed to write file \"%\".\n(exiting.)\n", name);
         exit(1);
     }
 }
@@ -826,15 +866,6 @@ vminfo_field_contains :: (vminfo: string, field: string, value: string) -> bool 
 
     return false;
 }
-
-#import "Basic";
-#import "Compiler";
-#import "Process";
-#import "File";
-#import "File_Utilities";
-#import "String";
-#import "System";
-#import "Hash";
 
 
 ISR_DECLARATION :: #string ISR

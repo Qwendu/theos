@@ -96,6 +96,7 @@ main :: (white_pieces: Player, black_pieces: Player, _depth: int) {
     repaint();
 
     defer write_fen();
+    defer sleep(conv(milliseconds_to_apollo(500)));
 
     while true {
         white_to_move = true;
@@ -113,7 +114,10 @@ make_move :: (player: Player) -> bool {
         adjusted_depth := depth + cast(int) random_get() % 4;
         adjusted_depth = clamp(adjusted_depth, 1, 10);
 
+        start := conv(formosa_get_time());
         move = search(*chess, clamp(adjusted_depth, 1, 10), fifty);
+        sleep(conv(start - conv(formosa_get_time()) + milliseconds_to_apollo(500)));
+
     } else if player == .HUMAN {
         move = human_move();
     } else {
@@ -149,7 +153,7 @@ make_move :: (player: Player) -> bool {
         write_string("Draw! (repetition)\n");
         return false;
     }
-    
+
     trivial, score := trivial_evaluation(*chess, fifty);
     if trivial && score == 0 {
         write_string("Draw! (material)\n");

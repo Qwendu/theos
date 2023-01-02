@@ -2,11 +2,17 @@
 #import "Formosa";
 #import "Basic";
 
+fail :: () {
+    write_string("No valid input :(\n");
+    write_string("Pipe a table through this program, and have the first argument be the name of a column,\nand the second argument be the value you want to filter. Example:\n\n");
+    write_string("    tasks | equals state, AWAKE");
+    exit();
+}
+
 main :: (left: string, right: string) {
     input_data := input();
     if !input_data.value_pointer {
-        write_string("No valid input :(\n");
-        return;
+        fail();
     }
 
     struct_offset: int = -1;
@@ -30,12 +36,10 @@ main :: (left: string, right: string) {
             if struct_offset == -1 return;
 
         } else {
-            write_string("No valid input :(\n");
-            return;
+            fail();
         }
     } else {
-        write_string("No valid input :(\n");
-        return;
+        fail();
     }
 
     array := cast(*[] void) input_data.value_pointer;
@@ -63,10 +67,3 @@ main :: (left: string, right: string) {
     any.type = input_data.type;
     output(any);
 }
-
-/* functions I need:
-
-get_field
-for array
-
-*/

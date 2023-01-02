@@ -194,6 +194,8 @@ yield :: () {
 
 exit :: () {
     task := current_task;
+    assert(task != *the_first_task);
+
     while true {
         assert(task != null);
         if task.next == current_task {

@@ -45,7 +45,7 @@ Deep_Copy :: (value: *void, info: *Type_Info, follow_struct_pointers := true, pr
     memcpy(result, value, info.runtime_size);
 
     local_pointer_map: Pointer_Map;
-    defer uninit(*local_pointer_map.table);
+    defer deinit(*local_pointer_map.table);
 
     if !pointer_map  pointer_map = *local_pointer_map;
     

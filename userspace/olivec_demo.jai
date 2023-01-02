@@ -21,15 +21,17 @@ main :: () {
             msg = get_message();
         }
 
+        sleep(conv(last + milliseconds_to_apollo(33) - conv(formosa_get_time())));
+
         now := conv(formosa_get_time());
         dt := cast(float32) to_float64_seconds(now - last);
-        last = now;
 
         vc_render(dt, canvas);
         repaint();
+
+        last = now;
     }
 }
-
 
 
 

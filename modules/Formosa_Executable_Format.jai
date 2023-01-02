@@ -10,11 +10,12 @@ Formosa_Exe_Header :: struct {
     // header_size: int; // The size of everything that isn't specific to the executable subtype
     // entry_points: []~s64 Exe_Entry_Point;
 
-    // Fix this nonsense
     input_parameter_count: int;
     type_table_offset: int;
     type_table_virtual_address: *Type_Info;
     type_table_size: int;
+
+    // required_cpu_privilege_level: int;
 
     required_cpu_features: []~s16 x86_Feature_Flag;
     recommended_cpu_features: []~s16 x86_Feature_Flag;
@@ -31,12 +32,6 @@ Formosa_Exe_Type :: enum {
     STANDARD :: 2;
     ELF :: 0;
 }
-
-Formosa_Exe_Flags :: enum_flags {
-    RING_0 :: 0x1;
-}
-
-MINIMAL_EXE_MAGIC :: #run << cast(*u64) "MINIMAL\0".data;
 
 Minimal_Exe_Header :: struct {
     data_section_in_the_file: []~s64 u8;
