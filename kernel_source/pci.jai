@@ -207,44 +207,6 @@ pci_get_base_address :: (info: Pci_Device_Info, bar: u32) -> base: u64, limit: u
     return base, limit, io_space;
 }
 
-pci_print_device_list :: () {
-    ti := type_info(Pci_Class_Code);
-
-    Pci :: struct {
-        Class: Pci_Class_Code;
-        Subclass: string;
-        Address: struct { bus, device, function: int; };
-        IF: u8; @Formosa.base16
-    }
-
-    list: [..] Pci;
-
-    context.print_style.default_format_struct.short_form_separator_between_fields = ":";
-    context.print_style.default_format_struct.begin_string = "";
-    context.print_style.default_format_struct.end_string = "";
-
-    for 0..pci_device_count - 1 {
-        device_info := pci_device_info[it];
-        new := Basic.array_add(*list);
-        new.Class = device_info.header.class_code;
-        new.IF = device_info.header.prog_if;
-
-        if new.Class < 0x10 {
-            class := PCI_SUBCLASSES[new.Class];
-            subclass := device_info.header.subclass;
-            if subclass == 0x80 new.Subclass = "Other";
-            else if class.count > subclass {
-                new.Subclass = class[subclass];
-            }
-        }
-        new.Address.bus = device_info.bus;
-        new.Address.device = device_info.index;
-        new.Address.function = device_info.function;
-    }
-
-    print_ipc_data(list);
-}
-
 
 
 Mass_Storage_Device :: struct {
@@ -274,6 +236,9 @@ Mass_Storage_Device :: struct {
     }
 
     Ahci :: struct {
+        phys_base: u64;
+        phys_size: int;
+
         command_list_base: *Ahci_Command_Header;
         command_list_length: int;
         received_fis: *Ahci_Received_Fis;
@@ -370,11 +335,11 @@ init_ide_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Device
             }
 
             ide_write(*new, .DRIVE_SELECT, xx device_type);
-            kernel_sleep_millseconds(5);
+            kernel_sleep_milliseconds(5);
 
             // IDENTIFY, to determine if the drive exists
             ide_write(*new, .COMMAND, Ide_Command.IDENTIFY);
-            kernel_sleep_millseconds(5);
+            kernel_sleep_milliseconds(5);
 
             status := cast(Ide_Status) ide_read(*new, .STATUS);
             if status == .NONE continue; // A clear status register indicates there is no device here

@@ -69,13 +69,16 @@ ps2_interrupt :: () #c_call {
     write_event_buffer(*input_key_buffer, event);
 }
 
-mouse_wait :: ($ is_signal: bool) #no_context {
-    tick := 10000;
+mouse_wait :: ($ is_signal: bool) {
+    tick := 100;
 
     for 1..tick {
         #if is_signal if !(port_read(Ps2_Port.STATUS) & 2) return;
         else          if   port_read(Ps2_Port.STATUS) & 1  return;
+        kernel_sleep_milliseconds(1);
     }
+
+    assert(false);
 }
 
 mouse: struct {
@@ -207,11 +210,9 @@ enable_ps2 :: () {
     mouse_wait(true);
     port_write(Ps2_Port.COMMAND, Ps2_Controller_Cmd.READ_CONFIG_BYTE);
 
-    mouse_wait(false);
+    mouse_wait(true);
     status := port_read(Ps2_Port.DATA);
     status |= 0x2;
-    // status &= ~cast(u8) 0x20;
-    // print_hex(status);
 
     mouse_wait(true);
     port_write(Ps2_Port.COMMAND, Ps2_Controller_Cmd.WRITE_CONFIG_BYTE);
@@ -225,7 +226,7 @@ enable_ps2 :: () {
     mouse_wait(true);
     port_write(Ps2_Port.DATA, Ps2_Mouse_Cmd.SET_DEFAULTS);
 
-    mouse_wait(false);
+    mouse_wait(true);
     // assert(port_read(Ps2_Port.DATA) == PS2_ACK);
 
     pic_enable_irq(.PS2_MOUSE);
@@ -236,7 +237,7 @@ enable_ps2 :: () {
     mouse_wait(true);
     port_write(Ps2_Port.DATA, Ps2_Mouse_Cmd.ENABLE_DATA_REPORTING);
 
-    mouse_wait(false);
+    mouse_wait(true);
     // assert(port_read(Ps2_Port.DATA) == PS2_ACK);
 
     input_key_buffer.read_index = input_key_buffer.write_index;

@@ -10,8 +10,19 @@ Kernel_Command :: struct {
 kernel_commands :: Kernel_Command.[
     .{ "memory_usage", cmd_get_memory_usage, .[] },
     .{ "tasks", cmd_list_tasks, .[] },
+    .{ "list_pci", cmd_list_pci, .[] },
+    .{ "storage", cmd_list_storage, .[] },
     .{ "windows", cmd_list_windows, .[] },
+    .{ "clear", cmd_clear, .[] },
 ];
+
+cmd_clear :: (args: ..Any) -> Any {
+    clear_text_viewer(*shell.text);
+    update_syntax_highlighting();
+
+    any: Any;
+    return any;
+}
 
 cmd_get_memory_usage :: (args: .. Any) -> Any {
     Result_Type :: struct {
@@ -39,8 +50,72 @@ cmd_get_memory_usage :: (args: .. Any) -> Any {
     return << mem;
 }
 
+cmd_list_storage :: (args: ..Any) -> Any {
+    Storage :: struct {
+        controller: enum { IDE; AHCI; };
+        sector_size: int;
+        sector_count: int;
+    }
+
+    list := New([..] Storage);
+
+    for disks {
+        new := array_add(list);
+        new.controller = ifx it.controller_type == .IDE then .IDE else type_of(Storage.controller).AHCI;
+        new.sector_size = it.sector_size;
+        new.sector_count = it.sector_count;
+    }
+
+    return << list;
+}
+
+cmd_list_pci :: (args: ..Any) -> Any {
+    ti := type_info(Pci_Class_Code);
+
+    Pci :: struct {
+        class: Pci_Class_Code;
+        subclass: string;
+        address: struct { bus, device, function: int; };
+    }
+
+    list := New([..] Pci);
+
+    for 0..pci_device_count - 1 {
+        device_info := pci_device_info[it];
+        new := Basic.array_add(list);
+        new.class = device_info.header.class_code;
+
+        if new.class < 0x10 {
+            class := PCI_SUBCLASSES[new.class];
+            subclass := device_info.header.subclass;
+
+            if subclass == 0x80 {
+                new.subclass = "Other";
+            } else if class.count > subclass {
+                new.subclass = class[subclass];
+            }
+        }
+
+        new.address.bus = device_info.bus;
+        new.address.device = device_info.index;
+        new.address.function = device_info.function;
+    }
+
+    return << list;
+}
+
 cmd_list_tasks :: (args: ..Any) -> Any {
     task := *the_first_task;
+
+    include_retired: bool;
+    if args.count > 0 {
+        if args[0].type.type == .STRING {
+            arg := << cast(*string) args[0].value_pointer;
+            if arg == "all" {
+                include_retired = true;
+            }
+        }
+    }
 
     Task_Status :: struct {
         name: string;
@@ -64,6 +139,21 @@ cmd_list_tasks :: (args: ..Any) -> Any {
         if task.next == *the_first_task task = idle_task;
 
         else task = task.next;
+    }
+
+    if include_retired {
+        task = retired_tasks;
+
+        while task && (task.state == .RETIRED || task.state == .EXITING) {
+            new := array_add(task_list);
+            new.name = task.parent_process.name;
+            new.state = task.state;
+            new.memory = task.used_memory;
+            new.wall_time = get_system_time() - task.start_time;
+            new.cpu_time = get_cpu_time(task);
+
+            task = task.next;
+        }
     }
 
     return << task_list;
@@ -1225,7 +1315,7 @@ print_ipc_data :: (value: Any) {
 
             number_of_dashes: int = 5;
             print("| # ");
-            if array.count >= 10 {
+            if array.count > 10 {
                 print(" ");
                 number_of_dashes += 1;
             }
@@ -1243,7 +1333,7 @@ print_ipc_data :: (value: Any) {
                 print("|");
                 printf(" % ", index, color = theme.highlight);
 
-                if array.count >= 10 && index < 10 print(" ");
+                if array.count > 10 && index < 10 print(" ");
 
                 for it, column: tis.members {
                     thing: Any;

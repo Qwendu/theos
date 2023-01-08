@@ -149,9 +149,9 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
     #asm { get_cr3 cr3; }
     task.page_table = cr3;
 
-    tls := map_memory(0x4000);
+    tls := map_memory(0x10_0000);
     task.thread_storage = tls;
-    task.thread_storage_size = 0x4000;
+    task.thread_storage_size = 0x10_0000;
 
     return task;
 }
@@ -170,6 +170,11 @@ yield :: () {
     // }
 
     new := current_task.next;
+
+    if current_task.state == .EXITING {
+        new = *the_first_task;
+    }
+
     while true {
         if new.state == .AWAKE {
             switch_to_task(new);
@@ -195,6 +200,7 @@ yield :: () {
 exit :: () {
     task := current_task;
     assert(task != *the_first_task);
+    assert(task != idle_task);
 
     while true {
         assert(task != null);
@@ -211,11 +217,8 @@ exit :: () {
 
     task.state = .EXITING;
 
-    retired := *retired_tasks;
-    while << retired && (<< retired).state == .EXITING {
-        retired = *(<< retired).next;
-    }
-    << retired = task;
+    task.next = retired_tasks;
+    retired_tasks = task;
 
     if shell.foreground_task == task {
         shell.foreground_task = *the_first_task;
@@ -239,7 +242,7 @@ clean_up_tasks :: () {
         retired = retired.next;
     }
 
-    retired_tasks = null;
+    // retired_tasks = null;
 }
 
 idle :: (data: *void) {

@@ -116,7 +116,7 @@ kernel_entry :: () {
         assert(initialize_filesystem());
 
         font_file, filesystem_result := read_file("system/font.pgm");
-        assert(filesystem_result == .success, tprint("Was: %\n", filesystem_result));
+        assert(filesystem_result == .success, tprint("Filesystem result was: %\n", filesystem_result));
 
         font: Pnm = parse_pnm(font_file);
 
@@ -138,7 +138,7 @@ kernel_entry :: () {
             shell_handle_text_command(it);
             update_shell();
 
-            kernel_sleep_millseconds(10);
+            kernel_sleep_milliseconds(10);
         }
 
         paint_screen();
@@ -151,7 +151,7 @@ kernel_entry :: () {
 
             clean_up_tasks();
 
-            kernel_sleep_millseconds(10);
+            kernel_sleep_milliseconds(10);
         }
     }
 }
@@ -225,7 +225,7 @@ assertion_failed :: (location: Source_Code_Location, message: string) {
     print_stack_trace();
     paint_screen();
 
-    if current_task == *the_first_task {
+    if current_task && current_task == *the_first_task {
         print("This assertion failure happened the kernel Sadge\nThere is nothing left to do");
         paint_screen();
         while true {
@@ -272,18 +272,6 @@ crt_memcmp :: (a: *u8, b: *u8, count: u64) -> s32 #c_call {
         }
     }
     return 0;
-}
-
-#program_export
-plt_entry_must_be_patched :: () #c_call {
-    kernel_context: Context;
-    kernel_context.allocator.proc = allocate_memory;
-    kernel_context.logger = log;
-    kernel_context.assertion_failed = assertion_failed;
-
-    push_context kernel_context {
-        print("You must patch another PLT table entry! But I don't know how to help you figure out which one :(\n");
-    }
 }
 
 assert :: (condition: bool, message: string = "", call_site := #caller_location) {
@@ -441,7 +429,7 @@ BochsBreak :: () #expand {
     }
 }
 
-kernel_sleep_millseconds :: (ms: int) {
+kernel_sleep_milliseconds :: (ms: int) {
     assert(current_task == *the_first_task);
 
     the_first_task.sleep_until = get_system_time() + milliseconds_to_apollo(10);
@@ -1204,20 +1192,13 @@ hpet_init :: () {
     hpet.base_period_femtoseconds = capabilities >> 32;
     assert(hpet.base_period_femtoseconds > 0 && hpet.base_period_femtoseconds < 100_000_000);
 
-    write(Hpet_Register.COUNTER, 0);
-
-    ENABLE_CNF :: 1;
-    write(.CONFIG, read(.CONFIG) | ENABLE_CNF);
+    hpet_restart();
 
     hpet.initialized = true;
 }
 
-hpet_get_ticks :: () -> u64 {
-    return read(Hpet_Register.COUNTER);
-}
-
 hpet_enable_interrupts :: (freq: u64) {
-    LEG_RT_CNF :: 2;
+    LEG_RT_CNF :: 0x2;
     write(.CONFIG, read(.CONFIG) | LEG_RT_CNF);
 
     timer := read(.TIMER0);
@@ -1228,15 +1209,32 @@ hpet_enable_interrupts :: (freq: u64) {
     // Tn_SIZE_CAP :: 0x20;
     // assert(timer & Tn_SIZE_CAP > 0, "HPET timer 0 is not 64bit");
 
-    Tn_INT_ENB_CNF :: 0x4;
-    Tn_TYPE_CNF :: 0x8;
-    write(.TIMER0, timer | Tn_TYPE_CNF | Tn_INT_ENB_CNF);
+    Tn_INT_TYPE_CNF :: 0x2; // Interrupt type (0=edge  1=level)
+    Tn_INT_ENB_CNF :: 0x4;  // Interrupt enable
+    Tn_TYPE_CNF :: 0x8;     // Timer type (0=non-periodic  1=periodic)
+    Tn_VAL_SET_CNF :: 0x40; // Enable 
+
+    timer |= (Tn_TYPE_CNF | Tn_INT_ENB_CNF);
+    timer &= ~Tn_INT_TYPE_CNF;
+
+    write(.TIMER0, timer);
 
     ticks_per_second := cast(u64) 1_000_000_000_000_000 / hpet.base_period_femtoseconds;
     hpet.ticks_per_interrupt = ticks_per_second / freq;
 
     write(.TIMER0_COMP, hpet.ticks_per_interrupt);
     pic_enable_irq(.PIT);
+
+    hpet_restart();
+}
+
+hpet_restart :: () {
+    ENABLE_CNF :: 0x1;
+    config := read(Hpet_Register.CONFIG);
+
+    write(.CONFIG, config & ~ENABLE_CNF);
+    write(Hpet_Register.COUNTER, 0);
+    write(.CONFIG, config | ENABLE_CNF);
 }
 
 #program_export
@@ -1476,7 +1474,7 @@ map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PR
         print("The physical address is "); print_hex(physical_address); print("\n");
         assert(false);
         paint_screen();
-        kernel_sleep_millseconds(500);
+        kernel_sleep_milliseconds(500);
     }
 
     pt[pt_offset] = physical_address | cast(u64) flags;
@@ -1629,7 +1627,7 @@ page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
         }
 
         if current_task != *the_first_task {
-            print("Exiting.\n"); while true { #asm { cli; hlt; }}
+            print("Exiting.\n");
             exit();
         } else {
             print("This happened in the kernel. There is nothing left to do.\n");
@@ -2418,7 +2416,7 @@ invalid_opcode_exception :: (stack_data: *Interrupt_Data) #c_call {
             }
         }
         if current_task != *the_first_task {
-            print("Exiting.\n"); while true { #asm { cli; hlt; }}
+            print("Exiting.\n");
             exit();
         } else {
             print("This happened in the kernel. There is nothing left to do.\n");
@@ -2571,7 +2569,7 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
 
         paint_screen();
         if current_task != *the_first_task {
-            print("Exiting.\n"); while true { #asm { cli; hlt; }}
+            print("Exiting.\n");
             exit();
         } else {
             print("This happened in the kernel. There is nothing left to do.\n");

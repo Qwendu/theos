@@ -8,9 +8,9 @@
 Constants :: struct {
     info_node_size :: size_of(Info_Node);
     block_size :: FS_BLOCKSIZE;
-    info_nodes_per_block :: FS_BLOCKSIZE / info_node_size;
+    info_nodes_per_block :: Constants.block_size / info_node_size;
     directory_entry_size :: size_of(Directory_Entry);
-    directory_entries_per_block :: FS_BLOCKSIZE / directory_entry_size;
+    directory_entries_per_block :: Constants.block_size / directory_entry_size;
 }
 
 Extent :: struct {
@@ -54,18 +54,18 @@ Master_Block :: struct {
         version: int;
         clock_generation: int;
     }
-    padding: [FS_BLOCKSIZE - size_of(type_of(content))] u8;
+    padding: [Constants.block_size - size_of(type_of(content))] u8;
 }
 
-#assert size_of(Master_Block) == FS_BLOCKSIZE;
+#assert size_of(Master_Block) == Constants.block_size;
 
-scratch_space: [FS_BLOCKSIZE] u8 #align FS_BLOCKSIZE;
+scratch_space: [Constants.block_size] u8 #align Constants.block_size;
 
 fs_bit_array: Bit_Array;
 
 // "bytes_required" is the total number of bytes required of this extent and the other extents, not an additional number of bytes, so include the existing file size if appending
 maybe_create_or_grow_extent :: (extent: *Extent, bytes_required: int) -> space_created: int {
-    blocks_required := (bytes_required + FS_BLOCKSIZE - 1) / FS_BLOCKSIZE;
+    blocks_required := (bytes_required + Constants.block_size - 1) / Constants.block_size;
 
     // Exit if the extent is already big enough
     if blocks_required <= extent.block_count return 0;
@@ -90,7 +90,7 @@ maybe_create_or_grow_extent :: (extent: *Extent, bytes_required: int) -> space_c
                 extent.block_index = bit - contiguous_bits_found + 1;
                 extent.block_count = blocks_required;
 
-                return blocks_required * FS_BLOCKSIZE;
+                return blocks_required * Constants.block_size;
             }
             bit += 1;
         }
@@ -104,65 +104,65 @@ maybe_create_or_grow_extent :: (extent: *Extent, bytes_required: int) -> space_c
                 // If there are not enough free blocks after the end of the extent
 
                 extent.block_count += it;
-                return it * FS_BLOCKSIZE;
+                return it * Constants.block_size;
             }
             set_bit(*fs_bit_array, block_index + it);
         }
 
         extent.block_count += new_blocks_required;
-        return new_blocks_required * FS_BLOCKSIZE;
+        return new_blocks_required * Constants.block_size;
     }
 
     return 0;
 }
 
 write_data_to_extent :: (extent: Extent, data: *u8, count: int) -> remaining: int {
-    blocks_required := (count + FS_BLOCKSIZE - 1) / FS_BLOCKSIZE;
+    blocks_required := (count + Constants.block_size - 1) / Constants.block_size;
     blocks_to_write := min(blocks_required, extent.block_count);
 
     for 0..blocks_to_write - 1 {
-        data_pointer := data + it * FS_BLOCKSIZE;
+        data_pointer := data + it * Constants.block_size;
 
-        location := FS_BASE_ADDRESS + (extent.block_index + it) * FS_BLOCKSIZE;
+        location := FS_BASE_ADDRESS + (extent.block_index + it) * Constants.block_size;
 
-        remaining := count - it * FS_BLOCKSIZE;
-        if remaining < FS_BLOCKSIZE {
-            memset(scratch_space.data, 0, FS_BLOCKSIZE);
+        remaining := count - it * Constants.block_size;
+        if remaining < Constants.block_size {
+            memset(scratch_space.data, 0, Constants.block_size);
             memcpy(scratch_space.data, data_pointer, remaining);
         } else {
-            memcpy(scratch_space.data, data_pointer, FS_BLOCKSIZE);
+            memcpy(scratch_space.data, data_pointer, Constants.block_size);
         }
         write_block(extent.block_index + it, xx scratch_space.data, fs_user_data);
     }
 
-    return count - blocks_to_write * FS_BLOCKSIZE;
+    return count - blocks_to_write * Constants.block_size;
 }
 
 read_data_from_extent :: (extent: Extent, data: *u8, count: int) -> read: int {
-    blocks_required := (count + FS_BLOCKSIZE - 1) / FS_BLOCKSIZE;
+    blocks_required := (count + Constants.block_size - 1) / Constants.block_size;
     blocks_to_read := min(blocks_required, extent.block_count);
 
     if read_extent {
         read_extent(extent.block_index, blocks_to_read, data, fs_user_data);
-        return min(count, blocks_to_read * FS_BLOCKSIZE);
+        return min(count, blocks_to_read * Constants.block_size);
     }
 
     // Read extent function callback may not be implemented by the user, in which case we read the extent block-by-block
     for 0..blocks_to_read - 1 {
-        data_pointer := data + it * FS_BLOCKSIZE;
-        location := FS_BASE_ADDRESS + (extent.block_index + it) * FS_BLOCKSIZE;
+        data_pointer := data + it * Constants.block_size;
+        location := FS_BASE_ADDRESS + (extent.block_index + it) * Constants.block_size;
         
         read_block(extent.block_index + it, xx scratch_space.data, fs_user_data);
-        remaining := count - it * FS_BLOCKSIZE;
+        remaining := count - it * Constants.block_size;
         
-        if remaining < FS_BLOCKSIZE {
+        if remaining < Constants.block_size {
             memcpy(data_pointer, scratch_space.data, remaining);
         } else {
-            memcpy(data_pointer, scratch_space.data, FS_BLOCKSIZE);
+            memcpy(data_pointer, scratch_space.data, Constants.block_size);
         }
     }
 
-    return min(count, blocks_to_read * FS_BLOCKSIZE);
+    return min(count, blocks_to_read * Constants.block_size);
 }
 
 using filesystem_cache;
@@ -213,8 +213,8 @@ find_info_node :: (path: [] string) -> Info_Node_Loc, bool {
         index = 0,
     };
 
-    block_storage := alloc(FS_BLOCKSIZE);
-    current_info_node_block := alloc(FS_BLOCKSIZE);
+    block_storage := alloc(Constants.block_size);
+    current_info_node_block := alloc(Constants.block_size);
 
     defer free(block_storage);
     defer free(current_info_node_block);
@@ -283,7 +283,7 @@ create_item :: (path_string: string, directory: bool) -> Filesystem_Result {
     parent_info_loc, success := find_info_node(path);
     if !success return .item_doesnt_exist;
 
-    block := cast(*Info_Node) alloc(FS_BLOCKSIZE);
+    block := cast(*Info_Node) alloc(Constants.block_size);
     defer free(block);
 
     now := get_timestamp(fs_user_data);
@@ -322,7 +322,7 @@ create_item :: (path_string: string, directory: bool) -> Filesystem_Result {
         assert(name.count < 32, tprint("File name too long: %, in the future arbitrary length filenames will be supported", name));
         memcpy(new_entry.name.data, name.data, name.count);
 
-        new_node_block := cast(*Info_Node) alloc(FS_BLOCKSIZE);
+        new_node_block := cast(*Info_Node) alloc(Constants.block_size);
         new_node_loc := allocate_info_node();
 
         read_block(new_node_loc.block, xx new_node_block, fs_user_data);
@@ -337,7 +337,7 @@ create_item :: (path_string: string, directory: bool) -> Filesystem_Result {
 
         if directory {
             new_node.flags |= .DIRECTORY;
-            maybe_create_or_grow_extent(*new_node.extents[0], FS_BLOCKSIZE * 4);
+            maybe_create_or_grow_extent(*new_node.extents[0], Constants.block_size * 4);
         }
 
         write_block(dir_block_index, xx block, fs_user_data);
@@ -350,7 +350,7 @@ create_item :: (path_string: string, directory: bool) -> Filesystem_Result {
 }
 
 allocate_info_node :: () -> Info_Node_Loc {
-    master_block: *Master_Block = alloc(FS_BLOCKSIZE);
+    master_block: *Master_Block = alloc(Constants.block_size);
     defer free(master_block);
 
     read_block(0, xx master_block, fs_user_data);
@@ -369,7 +369,7 @@ allocate_info_node :: () -> Info_Node_Loc {
     return loc;
 }
 
-Disk_Block :: [FS_BLOCKSIZE] u8;
+Disk_Block :: [Constants.block_size] u8;
 
 filesystem_cache: struct {
     master: Master_Block;
@@ -378,17 +378,19 @@ filesystem_cache: struct {
 
 #place master;
     array: [3] Disk_Block;
-} #align FS_BLOCKSIZE;
+} #align Constants.block_size;
 
 FS_BASE_ADDRESS :: 0x100_000;
 FS_BLOCKSIZE :: 4096;
 
-fs_user_data: *void;
+fs_user_data: *User_Datatype;
 
-read_extent: (block_index: int, block_count: int, buffer: *void, user: *void);
-read_block: (block_index: int, block: *Disk_Block, user: *void);
-write_block: (block_index: int, block: *Disk_Block, user: *void);
-get_timestamp: (user: *void) -> Apollo_Time;
+#module_parameters (User_Datatype := void);
+
+read_extent: (block_index: int, block_count: int, buffer: *void, user: *User_Datatype);
+read_block: (block_index: int, block: *Disk_Block, user: *User_Datatype);
+write_block: (block_index: int, block: *Disk_Block, user: *User_Datatype);
+get_timestamp: (user: *User_Datatype) -> Apollo_Time;
 
 Filesystem_Result :: enum s64 {
     success :: 0;
@@ -602,27 +604,6 @@ initialize_filesystem :: () -> bool {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #scope_module
     
 String :: union {
@@ -633,6 +614,7 @@ String :: union {
 File_Type :: struct {
     name: String;
     vendor: String;
+    mime: String;
     extension: [8] u8;
 
     flags: Flags;
@@ -643,12 +625,14 @@ File_Type :: struct {
         EXECUTABLE;
         LONG_NAME;
         LONG_VENDOR;
+        LONG_MIME;
     }
 }
 
 File_Type_Template :: struct {
     name: string;
     vendor: string;
+    mime: string;
     extension: string;
     flags: File_Type.Flags;
 }
@@ -657,6 +641,7 @@ built_in_filetypes :: File_Type_Template.[
     File_Type_Template.{
         name = "Portable Pixmap",
         vendor = "Netpbm Project",
+        mime = "image/x-portable-pixmap",
         extension = "ppm",
         flags = .BINARY,
     },
@@ -664,6 +649,7 @@ built_in_filetypes :: File_Type_Template.[
     File_Type_Template.{
         name = "Portable Graymap",
         vendor = "Netpbm Project",
+        mime = "image/x-portable-graymap",
         extension = "pgm",
         flags = .BINARY,
     },
@@ -671,6 +657,7 @@ built_in_filetypes :: File_Type_Template.[
     File_Type_Template.{
         name = "Plain Text",
         vendor = "",
+        mime = "text/plain",
         extension = "txt",
         flags = .UTF_8,
     },
@@ -678,6 +665,7 @@ built_in_filetypes :: File_Type_Template.[
     File_Type_Template.{
         name = "Efficiently Updateable Neural Network",
         vendor = "Yu Nasu",
+        mime = "x-nnue",
         extension = "nnue",
         flags = .BINARY,
     },
@@ -696,4 +684,3 @@ built_in_filetypes :: File_Type_Template.[
         flags = .BINARY,
     },
 ];
-

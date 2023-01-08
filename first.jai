@@ -10,11 +10,16 @@
 
 #import,file "modules/Nasm.jai";
 #import,file "modules/Elf.jai";
-#import,file "modules/Formosa_Filesystem.jai";
+#import,file "modules/Formosa_Filesystem.jai"(Fs_Data);
 #import,file "modules/Linker_Script.jai";
 
 #load "config.jai";
 #load "build_app.jai";
+
+Fs_Data :: struct {
+    disk_image: *void;
+    current_time: Apollo_Time;
+}
 
 exceptions: [] struct {
     message: string;
@@ -608,33 +613,28 @@ interrupt_handlers: [] struct {
         cursor += file_length(kernel);
         print("Kernel size: % kb\n", file_length(kernel) / 1024);
 
-        Fs_Data :: struct {
-            disk_image: *void;
-            current_time: Apollo_Time;
-        }
-
         fs_data: Fs_Data;
         fs_user_data = *fs_data;
         fs_data.disk_image = disk_image;
 
-        write_block = (block_index: int, block: *Disk_Block, user: *void) {
+        write_block = (block_index: int, block: *Disk_Block, user: *Fs_Data) {
             offset := block_index * FS_BLOCKSIZE + FS_BASE_ADDRESS;
-            memcpy((cast(*Fs_Data) user).disk_image + offset, block, FS_BLOCKSIZE);
+            memcpy(user.disk_image + offset, block, FS_BLOCKSIZE);
         };
 
-        read_block = (block_index: int, block: *Disk_Block, user: *void) {
+        read_block = (block_index: int, block: *Disk_Block, user: *Fs_Data) {
             offset := block_index * FS_BLOCKSIZE + FS_BASE_ADDRESS;
-            memcpy(block, (cast(*Fs_Data) user).disk_image + offset, FS_BLOCKSIZE);
+            memcpy(block, user.disk_image + offset, FS_BLOCKSIZE);
         };
 
-        get_timestamp = (user: *void) -> Apollo_Time {
-            apollo := (cast(*Fs_Data) user).current_time;
+        get_timestamp = (user: *Fs_Data) -> Apollo_Time {
+            apollo := user.current_time;
             return apollo;
         };
 
         format_filesystem();
 
-        visit_files("filesystem", true, fs_user_data, (info: *File_Visit_Info, user_data: *void) {
+        visit_files("filesystem", true, fs_user_data, (info: *File_Visit_Info, user_data: *Fs_Data) {
             name := info.full_name;
             name.data += "filesystem/".count;
             name.count -= "filesystem/".count;
