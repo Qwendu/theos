@@ -72,7 +72,7 @@ interrupt_handlers: [] struct {
     user_args, compiler_args := get_build_options().compile_time_command_line;
 
     run_vm: bool;
-    userspace: bool;
+    userspace: bool = true;
     all_userspace: bool;
     no_kernel: bool;
     setup_vm: bool;
@@ -90,7 +90,7 @@ interrupt_handlers: [] struct {
             assemble();
             return;
           case "run_vm";     run_vm = true;
-          case "user";       userspace = true;
+          case "no_user";    userspace = false;
           case "user_all";   all_userspace = true;
           case "no_kernel";  no_kernel = true;
           case "setup_vm";   setup_vm = true;
@@ -132,7 +132,7 @@ interrupt_handlers: [] struct {
 
         vbox_installed := shell("VBoxManage --version", print_output = false);
         if !vbox_installed {
-            write_string("It appears that VirtualBox is not installed on your computer. You must install it, or boot the OS on a different system.\n");
+            write_string("It appears that VirtualBox is not installed on your computer. You must install it, or boot the OS in a different way.\n");
             write_string("(exiting.)\n");
             return;
         }
@@ -186,10 +186,10 @@ interrupt_handlers: [] struct {
         }
 
         write_string("\n=== Running VirtualBox ===\n");
-        
+
         vbox_installed := shell("VBoxManage --version", print_output = false);
         if !vbox_installed {
-            write_string("It appears that VirtualBox is not installed on your computer. You must install it, or boot the OS on a different system.\n");
+            write_string("It appears that VirtualBox is not installed on your computer. You must install it, or boot the OS in a different way.\n");
             write_string("(exiting.)\n");
             return;
         }
