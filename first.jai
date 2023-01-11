@@ -99,6 +99,7 @@ interrupt_handlers: [] struct {
             return;
           case;
             print("Error: did not understand command line argument \"%\". See readme.md\n", it);
+            if it == "user" write_string("(The \"user\" command line argument is now the default, and has been removed.\n");
             write_string("(exiting.)\n");
             return;
         }
@@ -167,6 +168,8 @@ interrupt_handlers: [] struct {
         shell("VBoxManage modifyvm formosa --bioslogofadeout off");
         shell("VBoxManage modifyvm formosa --bioslogodisplaytime 0");
         shell("VBoxManage modifyvm formosa --biosbootmenu disabled");
+        shell("VBoxManage modifyvm formosa --audiocontroller ac97");
+        shell("VBoxManage modifyvm formosa --audioout on");
         shell("VBoxManage setextradata formosa \"CustomVideoMode1\" \"2560x1440x32\"", dont_quote = true);
         shell("VBoxManage setextradata formosa \"CustomVideoMode2\" \"1920x1080x32\"", dont_quote = true);
         shell("VBoxManage setextradata formosa \"CustomVideoMode3\" \"1440x900x32\"", dont_quote = true);

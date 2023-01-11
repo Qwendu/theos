@@ -141,6 +141,8 @@ kernel_entry :: () {
             kernel_sleep_milliseconds(10);
         }
 
+        discover_sound_devices();
+
         paint_screen();
 
         while true {

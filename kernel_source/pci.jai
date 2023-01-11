@@ -63,7 +63,7 @@ Pci_Header :: struct {
     revision_id:     u8;
     prog_if:         u8;
     subclass:        u8;
-    class_code:      Pci_Class_Code;
+    class:      Pci_Class_Code;
     cache_line_size: u8;
     latency_timer:   u8;
     header_type:     u8;
@@ -109,7 +109,7 @@ scan_bus :: (bus: u32) {
 
                 AddDevice(function);
 
-                if header.class_code == .BRIDGE && header.subclass == 4 {
+                if header.class == .BRIDGE && header.subclass == 4 {
                     bridge_info := pci_device_info[pci_device_count - 1];
                     register := pci_read_config_register(bridge_info, 0x6);
                     secondary_bus_number := (register >> 8) & 0xff;
@@ -281,15 +281,15 @@ discover_mass_storage_devices :: () {
     defer disks = discovered;
 
     for device: 0..pci_device_count - 1 {
-        info := pci_device_info[device];
-        if info.header.class_code != .MASS_STORAGE continue;
+        pci := pci_device_info[device];
+        if pci.header.class != .MASS_STORAGE continue;
 
-        if info.header.subclass == PCI_SUBCLASS_IDE {
-            init_ide_controller(info, *discovered);
+        if pci.header.subclass == PCI_SUBCLASS_IDE {
+            init_ide_controller(pci, *discovered);
         }
 
-        if info.header.subclass == PCI_SUBCLASS_SATA {
-            init_ahci_controller(info, *discovered);
+        if pci.header.subclass == PCI_SUBCLASS_SATA {
+            init_ahci_controller(pci, *discovered);
         }
     }
 
@@ -982,8 +982,118 @@ HBA_PxCMD__Ahci_Port_Command_Status :: enum_flags u32 {
 
 
 
+AC97_NABMBAR__Dma_Register :: enum u16 {
+    PI_BDBAR__pcm_input_buffer_desc_list_base :: 0x0;
+    PI_CIV__pcm_input_current_index_value :: 0x4;
 
+    PO_BDBAR__pcm_output_buffer_desc_list_base :: 0x10;
+    PO_CIV__pcm_output_current_index_value :: 0x14;
+    PO_LVI__pcm_output_last_valid_index :: 0x15;
+    PO_CR__pcm_output_control :: 0x1b;
 
+    GLOB_CNT__global_control :: 0x2c;
+}
+
+AC97_NAMBAR__Mixer_Register :: enum u16 {
+    RESET :: 0x0;
+}
+
+Ac97_Buffer_Descriptor :: struct {
+    address: u32;
+    length: u16;
+    control: enum u16 {
+        BUP__underrun_policy;
+        IOC__interrupt_on_completion;
+    }
+}
+
+Ac97 :: struct {
+    address_space: enum { io; main_memory; };
+    mixer_base: u64;
+    dma_base: u64;
+
+    pcm_buffer_list: [] Ac97_Buffer_Descriptor;
+}
+
+write :: (device: Ac97, r: AC97_NAMBAR__Mixer_Register, value: u16) {
+    address := cast(u16) device.mixer_base + xx r;
+    out(address, value);
+}
+
+write :: (device: Ac97, $Integer: Type, r: AC97_NABMBAR__Dma_Register, value: Integer) {
+    address := cast(u16) device.dma_base + xx r;
+    out(address, value);
+}
+
+read :: (device: Ac97, $Integer: Type, r: AC97_NABMBAR__Dma_Register) -> Integer {
+    address := cast(u16) device.dma_base + xx r;
+    return in(address, Integer);
+}
+
+ac97: Ac97;
+
+discover_sound_devices :: () {
+    assert(pci_devices_scanned);
+
+    using Page_Flags;
+    uncacheable := READ_WRITE | PRESENT | CACHE_DISABLE;
+
+    for device: 0..pci_device_count - 1 {
+        pci := pci_device_info[device];
+
+        if pci.header.class != .MULTIMEDIA  continue;
+        if pci.header.subclass != 0x1  continue;
+
+        command_status := pci_read_config_register(pci, 0x1);
+        pci_write_config_register(pci, 0x1, command_status | xx Pci_Command.BUS_MASTER);
+
+        write(ac97, u32, .GLOB_CNT__global_control, 0x2);
+        write(ac97, .RESET, 0xffff);
+
+        ac97.mixer_base = pci_get_base_address(pci, 0);
+        ac97.dma_base = pci_get_base_address(pci, 1);
+
+        ac97.address_space = .io;
+
+        ac97.pcm_buffer_list.count = 32;
+        ac97.pcm_buffer_list.data = map_memory(size_of(Ac97_Buffer_Descriptor) * 32, flags = uncacheable);
+
+        phys_base := get_physical_address(ac97.pcm_buffer_list.data);
+        assert(phys_base != 0);
+        assert(phys_base & 0xffff_ffff == phys_base);
+
+        cr := read(ac97, u8, .PO_CR__pcm_output_control);
+        write(ac97, u8, .PO_CR__pcm_output_control, cr | 0x2);
+
+        Timeout(#code {
+            cr = read(ac97, u8, .PO_CR__pcm_output_control);
+            if (cr & 0x2) == 0  break;
+        }, "AC'97 reset timeout");
+
+        buffer_size_samples := 0xfffe;
+        random_seed(<< cast(*Random_State) *get_system_time());
+
+        for *ac97.pcm_buffer_list {
+            pcm_buffer := map_memory(buffer_size_samples * size_of(u16), flags = uncacheable);
+
+            it.address = cast(u32) get_physical_address(pcm_buffer);
+            it.length = cast(u16) buffer_size_samples;
+
+            samples := cast(*u16) pcm_buffer;
+            for 0..buffer_size_samples-1 {
+                samples[it] = cast(u16) ((random_get() >> 13) & 0xffff);
+            }
+        }
+
+        write(ac97, u32, .PO_BDBAR__pcm_output_buffer_desc_list_base, cast(u32) phys_base);
+        write(ac97, u8, .PO_LVI__pcm_output_last_valid_index, 31);
+
+        // cr = read(ac97, u8, .PO_CR__pcm_output_control);
+        // write(ac97, u8, .PO_CR__pcm_output_control, cr | 1);
+    }
+}
+
+#import "Random";
 
 
 
@@ -1021,7 +1131,7 @@ hda_discover :: () -> Pci_Device_Info, bool {
 
     for 0..pci_device_count-1 {
         info := pci_device_info[it];
-        if info.header.class_code == .MULTIMEDIA && info.header.subclass == 0x3 {
+        if info.header.class == .MULTIMEDIA && info.header.subclass == 0x3 {
             return info, true;
         }
     }

@@ -83,7 +83,7 @@ cmd_list_pci :: (args: ..Any) -> Any {
     for 0..pci_device_count - 1 {
         device_info := pci_device_info[it];
         new := Basic.array_add(list);
-        new.class = device_info.header.class_code;
+        new.class = device_info.header.class;
 
         if new.class < 0x10 {
             class := PCI_SUBCLASSES[new.class];
