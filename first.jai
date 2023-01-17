@@ -120,7 +120,7 @@ interrupt_handlers: [] struct {
     }
 
     if setup_vm {
-        if run_vm || userspace || no_kernel || all_userspace || compile_specific_app.count {
+        if run_vm || !userspace || no_kernel || all_userspace || compile_specific_app.count {
             write_string("Flags other than \"setup_vm\" are being ignored. You should compile, setup, and run using separate invocations of this program.\n");
         }
 
@@ -179,7 +179,7 @@ interrupt_handlers: [] struct {
     }
 
     if run_vm {
-        if userspace || no_kernel || all_userspace || compile_specific_app.count {
+        if !userspace || no_kernel || all_userspace || compile_specific_app.count {
             write_string("Flags other than \"run_vm\" are being ignored. You should compile and run using separate invocations of this program.\n");
         }
 
@@ -535,8 +535,8 @@ interrupt_handlers: [] struct {
                 hash_cache, success = read_entire_file(".build/userspace_app_hashes");
             }
 
-            system_library_code := read_entire_file("modules/Formosa.jai");
-            library_hash := sdbm_hash(system_library_code.data, system_library_code.count);
+            // system_library_code := read_entire_file("modules/Formosa.jai");
+            // library_hash := sdbm_hash(system_library_code.data, system_library_code.count);
 
             build_program_code := read_entire_file("build_app.jai");
             build_program_hash := sdbm_hash(build_program_code.data, build_program_code.count);
@@ -558,7 +558,7 @@ interrupt_handlers: [] struct {
                 defer free(source_code);
                 assert(success);
 
-                hash := sdbm_hash(source_code.data, source_code.count) ^ library_hash ^ build_program_hash;
+                hash := sdbm_hash(source_code.data, source_code.count) ^ build_program_hash;
                 array_add(*new_hashes, hash);
 
                 if !all_userspace {
@@ -602,7 +602,7 @@ interrupt_handlers: [] struct {
             return;
         }
 
-        DISK_SIZE :: 0x400_0000;
+        DISK_SIZE :: 0x800_0000;
 
         disk_image := cast(*u8) alloc(DISK_SIZE);
         cursor: int;

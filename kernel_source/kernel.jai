@@ -15,6 +15,7 @@ using,except .["get_system_time"] Basic :: #import "Basic";
 #load "keyboard.jai";
 #load "shell.jai";
 #load "task.jai";
+#load "audio.jai";
 
 cpu: Cpu_X86;
 
@@ -131,6 +132,9 @@ kernel_entry :: () {
         init_graphics(*boot_data);
         init_shell(font);
 
+        init_audio();
+        discover_sound_devices();
+
         startup := read_file("system/startup");
         commands := split(cast(string) startup, "\n");
 
@@ -140,8 +144,6 @@ kernel_entry :: () {
 
             kernel_sleep_milliseconds(10);
         }
-
-        discover_sound_devices();
 
         paint_screen();
 
@@ -432,10 +434,8 @@ BochsBreak :: () #expand {
 }
 
 kernel_sleep_milliseconds :: (ms: int) {
-    assert(current_task == *the_first_task);
-
-    the_first_task.sleep_until = get_system_time() + milliseconds_to_apollo(10);
-    the_first_task.state = .SLEEPING;
+    current_task.sleep_until = get_system_time() + milliseconds_to_apollo(ms);
+    current_task.state = .SLEEPING;
     yield();
 }
 
@@ -1424,7 +1424,7 @@ unmap_page :: (virtual_address: u64) {
     pt[pt_offset] = 0;
 }
 
-map_memory :: (size_bytes: int, virtual_address: u64 = xx,no_check -1, physical_address: u64 = xx,no_check -1, flags := Page_Flags.PRESENT | .READ_WRITE, physically_contiguous := false, loc := #caller_location) -> *void {
+map_memory :: (size_bytes: int, virtual_address: u64 = xx,no_check -1, physical_address: u64 = xx,no_check -1, flags := Page_Flags.PRESENT | .READ_WRITE, physically_contiguous := false, loc := #caller_location) -> *void, u64 {
     page_count := (size_bytes + (0x1000 - 1)) / 0x1000;
 
     source := virtual_address;
@@ -1449,7 +1449,7 @@ map_memory :: (size_bytes: int, virtual_address: u64 = xx,no_check -1, physical_
         map_page(source + offset, phys, flags, loc);
     }
 
-    return xx source;
+    return xx source, target;
 }
 
 map_page :: (virtual_address: u64, physical_address: u64, flags := Page_Flags.PRESENT | .READ_WRITE, loc := #caller_location) {
@@ -1720,7 +1720,7 @@ get_new_page_frame :: () -> u64 {
     lowest_free_bit = bit + 1;
 
     available_memory -= 0x1000;
-    if current_task  current_task.used_memory += 0x1000;
+    if current_task  current_task.process.used_memory += 0x1000;
 
     memset(xx (address + VIRTUAL_MIRROR), 0, 0x1000);
     return address;
@@ -1745,7 +1745,7 @@ get_contiguous_page_frames :: (page_count: int) -> u64 {
             }
 
             available_memory -= page_count * 0x1000;
-            if current_task  current_task.used_memory += page_count * 0x1000;
+            if current_task  current_task.process.used_memory += page_count * 0x1000;
 
             return cast(u64) (bit - contiguous_bits_found) * 0x1000;
         }
@@ -1764,7 +1764,7 @@ release_page_frame :: (address: u64) {
         lowest_free_bit = bit;
     }
 
-    if current_task  current_task.used_memory -= 0x1000;
+    if current_task  current_task.process.used_memory -= 0x1000;
 }
 
 create_address_space :: () -> u64 {
@@ -1971,9 +1971,20 @@ Syscall_Numbers :: enum {
     YIELD                   :: 0x17;
     EXIT                    :: 0x18;
     GET_WINDOW_BUFFER       :: 0x19;
-    GET_MOUSE_POSITION      :: 0x20;
-    GET_WINDOW_SIZE         :: 0x21;
-    SLEEP                   :: 0x22;
+    GET_MOUSE_POSITION      :: 0x1a;
+    GET_WINDOW_SIZE         :: 0x1b;
+    SLEEP                   :: 0x1c;
+    CREATE_THREAD           :: 0x1d;
+    JOIN_THREAD             :: 0x1e;
+
+    ACQUIRE_SYSTEM_MIXER_CHANNEL :: 0x3e;
+    RELEASE_SYSTEM_MIXER_CHANNEL :: 0x3f;
+    CREATE_AUDIO_SOURCE     :: 0x30;
+    CREATE_AUDIO_SINK       :: 0x31;
+    CONNECT_AUDIO_ENDPOINTS :: 0x32;
+    START_AUDIO_SOURCE      :: 0x33;
+    STOP_AUDIO_SOURCE       :: 0x34;
+    BLOCKING_SUBMIT_AUDIO_BUFFER :: 0x35;
 }
 
 #program_export
@@ -1988,14 +1999,14 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
         msg: Message;
         msg.kind = .NONE;
 
-        event, success := read_event_buffer(*current_task.parent_process.input);
+        event, success := read_event_buffer(*current_task.process.input);
         if success {
             msg.kind = .KEYBOARD;
             msg.keyboard = event;
             return msg;
         }
 
-        mouse_event := read_event_buffer(*current_task.parent_process.mouse_events);
+        mouse_event := read_event_buffer(*current_task.process.mouse_events);
         if mouse_event.event != .NONE {
             msg.kind = .MOUSE;
             msg.mouse = mouse_event;
@@ -2096,19 +2107,19 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             context.allocator.data = *allocator_data;
             ti := cast(*Type_Info) data.rcx;
 
-            current_task.parent_process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
+            current_task.process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
             if ti.type == .ARRAY {
-                current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Array));
+                current_task.process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Array));
             } else if ti.type == .STRUCT {
-                current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Struct));
+                current_task.process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Struct));
             } else if ti.type == .STRING {
-                current_task.parent_process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_String));
+                current_task.process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_String));
             }
             context.allocator.proc = allocate_memory;
 
           case INPUT;
             target := cast(*Any) data.rbx;
-            << target = current_task.parent_process.input_data;
+            << target = current_task.process.input_data;
 
           case MAP_MEMORY;
             buffer := map_memory(xx data.rcx);
@@ -2246,6 +2257,19 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             current_task.state = .SLEEPING;
             yield();
 
+         case CREATE_THREAD;
+            entry := cast((*void)) data.rbx;
+            task := make_task(entry);
+            task.process.name = tprint("% thread", current_task.process.name);
+            array_add(*current_task.subtasks, task);
+            << cast(*u64) data.rcx = cast(u64) task;
+
+          case JOIN_THREAD;
+            task := cast(*Task_Info) data.rbx;
+            current_task.state = .JOINING;
+            current_task.next_blocked = task;
+            yield();
+
           case GET_MOUSE_POSITION;
             w := cast(Window_Handle) data.rdx;
 
@@ -2272,6 +2296,63 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 << cast(*int) data.rcx = windows[w].blitter.draw.height;
             }
 
+          case ACQUIRE_SYSTEM_MIXER_CHANNEL;
+            sink := make_mixer_channel();
+            << cast(*s64) data.rbx = sink;
+
+          case RELEASE_SYSTEM_MIXER_CHANNEL;
+            sink_id := cast(s64) data.rbx;
+            sink := pool_get(*audio_sink_pool, sink_id);
+            array_unordered_remove_by_value(*system_mixer.channels, sink);
+            pool_remove(*audio_sink_pool, sink_id);
+
+          case CREATE_AUDIO_SOURCE;
+            id, source := pool_add(*audio_source_pool, .{});
+            source.buffer = map_memory(AUDIO_BLOCKSIZE * size_of(u16));
+            << cast(*s64) data.rbx = id;
+
+          case CONNECT_AUDIO_ENDPOINTS;
+            source, exists1 := pool_get(*audio_source_pool, cast(s64) data.rbx);
+            sink, exists2   := pool_get(*audio_sink_pool,   cast(s64) data.rcx);
+
+            if exists1 && exists2 {
+                source.sink_id = cast(s64) data.rcx;
+                sink.source_id = cast(s64) data.rbx;
+            }
+
+          case START_AUDIO_SOURCE;
+            source_id := cast(s64) data.rbx;
+            source, exists := pool_get(*audio_source_pool, source_id);
+
+            if exists {
+                array_add(*running_sources, source);
+            }
+
+          case STOP_AUDIO_SOURCE;
+            source_id := cast(s64) data.rbx;
+            source, exists := pool_get(*audio_source_pool, source_id);
+
+            if exists {
+                sink, sink_exists := pool_get(*audio_sink_pool, source.sink_id);
+                if sink_exists {
+                    memset(sink.buffer, 0, AUDIO_BLOCKSIZE * size_of(u16));
+                }
+                array_unordered_remove_by_value(*running_sources, source);
+            }
+
+          case BLOCKING_SUBMIT_AUDIO_BUFFER;
+            source_id := cast(s64) data.rbx;
+            source, exists := pool_get(*audio_source_pool, source_id);
+
+            if exists {
+                buffer := cast(*u16) data.rcx;
+                memcpy(source.buffer, buffer, AUDIO_BLOCKSIZE * size_of(u16));
+
+                while !source.buffer_consumed {
+                    yield();
+                }
+                source.buffer_consumed = false;
+            }
 
           case;
             HexMode();

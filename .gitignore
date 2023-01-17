@@ -1,7 +1,7 @@
 
 /.build/*
 /bochs state/*
-formosa
+
 modules/Basic/
 modules/Input/
 modules/.build/*
@@ -80,3 +80,4 @@ freetype-2.12.1/*
 update.txt
 userspace/chess_engine/nnue_objdump.txt
 filesystem/programs/olivec_demo
+filesystem/programs/music_player

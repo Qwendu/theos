@@ -16,30 +16,36 @@ Task_Info :: struct {
     entry: (data: *void);
     the_context: *Context;
 
-    used_memory: int;
     start_time: Apollo_Time;
     cpu_time: Apollo_Time;
-
-    sleep_until: Apollo_Time;
 
     state: enum {
         INVALID;
         AWAKE;
         WAITING_FOR_MESSAGE;
         SLEEPING;
+        BLOCKED;
+        JOINING;
         EXITING;
         RETIRED;
     };
 
-    parent_process: struct {
+    sleep_until: Apollo_Time;
+    next_blocked: *Task_Info;
+
+    process: struct {
         input: Event_Buffer(Keyboard_Event);
         mouse_events: Event_Buffer(Mouse_Event);
 
         input_data: Any;
         output_data: Any;
 
+        used_memory: int;
+
         name: string;
     };
+
+    subtasks: [..] *Task_Info;
 }
 
 Xsave_Area :: struct {
@@ -72,7 +78,7 @@ initialize_task_manager :: () {
     the_first_task.the_context = *context;
     the_first_task.state = .AWAKE;
     the_first_task.page_table = to_physical(pml4.data);
-    the_first_task.parent_process.name = "kernel";
+    the_first_task.process.name = "kernel";
     the_first_task.xsave_area = map_memory(size_of(Xsave_Area));
 
     current_task = *the_first_task;
@@ -82,7 +88,7 @@ initialize_task_manager :: () {
     last_task_switch_timestamp = now;
 
     idle_task = make_task(idle, stack_size = 0x400);
-    idle_task.parent_process.name = "idle";
+    idle_task.process.name = "idle";
     idle_task.xsave_area = map_memory(size_of(Xsave_Area));
 
     the_first_task.next = *the_first_task;
@@ -189,6 +195,15 @@ yield :: () {
             }
         }
 
+        if new.state == .JOINING {
+            if new.next_blocked.state == .RETIRED {
+                new.next_blocked = null;
+                new.state = .AWAKE;
+                switch_to_task(new);
+                return;
+            }
+        }
+
         new = new.next;
         if new == current_task.next {
             switch_to_task(idle_task);
@@ -197,20 +212,34 @@ yield :: () {
     }
 }
 
+unschedule :: (_task: *Task_Info) {
+    task := _task;
+
+    while true {
+        assert(task != null);
+        if task.next == _task {
+            task.next = task.next.next;
+            break;
+        }
+
+        task = task.next;
+        assert(task != _task);
+    }
+}
+
 exit :: () {
     task := current_task;
     assert(task != *the_first_task);
     assert(task != idle_task);
 
-    while true {
-        assert(task != null);
-        if task.next == current_task {
-            task.next = task.next.next;
-            task = current_task;
-            break;
-        }
-        task = task.next;
-        assert(task != current_task);
+    unschedule(task);
+
+    for task.subtasks {
+        if it.state == .RETIRED continue;
+        unschedule(it);
+        it.state = .EXITING;
+        it.next = retired_tasks;
+        retired_tasks = it;
     }
 
     for *windows if it.exists && it.owner == task  close_window(it_index);
@@ -263,6 +292,51 @@ preempt :: (rip: u64) #no_context {
 
 
 
+
+Mutex :: struct {
+    held_by: *Task_Info;
+    blocked_tasks: *Task_Info;
+}
+
+acquire_mutex :: (mutex: *Mutex, timeout := Apollo_Time.{}) {
+    // #asm { pushf sp:; cli; }
+    // defer #asm { popf sp; }
+
+    if mutex.held_by == null {
+        mutex.held_by = current_task;
+        return;
+    }
+
+    if !mutex.blocked_tasks {
+        mutex.blocked_tasks = current_task;
+    } else {
+        last := mutex.blocked_tasks;
+        while last.next_blocked  last = last.next_blocked;
+        last.next_blocked = current_task;
+    }
+
+    current_task.state = .BLOCKED;
+
+    yield();
+}
+
+release_mutex :: (mutex: *Mutex) {
+    // #asm { pushf sp:; cli; }
+    // defer #asm { popf sp; }
+
+    if mutex.held_by != current_task {
+        return;
+    }
+
+    mutex.held_by = mutex.blocked_tasks;
+
+    if mutex.held_by {
+        mutex.blocked_tasks = mutex.blocked_tasks.next_blocked;
+
+        mutex.held_by.state = .AWAKE;
+        mutex.held_by.next_blocked = null;
+    }
+}
 
 
 

@@ -129,9 +129,9 @@ cmd_list_tasks :: (args: ..Any) -> Any {
 
     while true {
         new := array_add(task_list);
-        new.name = task.parent_process.name;
+        new.name = task.process.name;
         new.state = task.state;
-        new.memory = task.used_memory;
+        new.memory = task.process.used_memory;
         new.wall_time = get_system_time() - task.start_time;
         new.cpu_time = get_cpu_time(task);
 
@@ -146,9 +146,9 @@ cmd_list_tasks :: (args: ..Any) -> Any {
 
         while task && (task.state == .RETIRED || task.state == .EXITING) {
             new := array_add(task_list);
-            new.name = task.parent_process.name;
+            new.name = task.process.name;
             new.state = task.state;
-            new.memory = task.used_memory;
+            new.memory = task.process.used_memory;
             new.wall_time = get_system_time() - task.start_time;
             new.cpu_time = get_cpu_time(task);
 
@@ -170,7 +170,7 @@ cmd_list_windows :: (args: .. Any) -> Any {
 
     for windows if it.exists {
         new := array_add(window_list);
-        new.process = it.owner.parent_process.name;
+        new.process = it.owner.process.name;
         new.xpos = it.blitter.draw.x;
         new.ypos = it.blitter.draw.y;
         new.width = it.blitter.draw.width;
@@ -189,7 +189,7 @@ kernel_command_launcher_task :: (data: *void) {
     command := cast(*Kernel_Command_Startup_Data) data;
     result := command.procedure(.. command.args);
 
-    current_task.parent_process.output_data = result;
+    current_task.process.output_data = result;
 }
 
 
@@ -201,11 +201,11 @@ handle_keyboard_events :: () {
         if !success break;
 
         if key_code == .FLAG || shell.flag_held {
-            write_event_buffer(*the_first_task.parent_process.input, event);
+            write_event_buffer(*the_first_task.process.input, event);
             continue;
         }
 
-        write_event_buffer(*shell.foreground_task.parent_process.input, event);
+        write_event_buffer(*shell.foreground_task.process.input, event);
         if shell.foreground_task.state == .WAITING_FOR_MESSAGE {
             shell.foreground_task.state = .AWAKE;
         }
@@ -233,7 +233,7 @@ handle_mouse_events :: () {
         event.pixel_position_y = mouse.position_y;
 
         if shell.flag_held {
-            write_event_buffer(*the_first_task.parent_process.mouse_events, event);
+            write_event_buffer(*the_first_task.process.mouse_events, event);
             continue;
         }
 
@@ -246,7 +246,7 @@ handle_mouse_events :: () {
             event.pixel_position_in_window_y = event.pixel_position_y - window.blitter.draw.y;
         }
 
-        write_event_buffer(*shell.foreground_task.parent_process.mouse_events, event);
+        write_event_buffer(*shell.foreground_task.process.mouse_events, event);
         if shell.foreground_task.state == .WAITING_FOR_MESSAGE {
             shell.foreground_task.state = .AWAKE;
         }
@@ -384,7 +384,7 @@ get_window_at :: (x: int, y: int) -> Window_Handle {
 
 shell_handle_mouse :: () {
     while true {
-        event := read_event_buffer(*the_first_task.parent_process.mouse_events);
+        event := read_event_buffer(*the_first_task.process.mouse_events);
         if event.event == .NONE break;
 
         if event.event == .BUTTON_1_PRESSED && shell.flag_held {
@@ -431,7 +431,7 @@ shell_handle_mouse :: () {
 }
 
 shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = "" {
-    event, success := read_event_buffer(*the_first_task.parent_process.input);
+    event, success := read_event_buffer(*the_first_task.process.input);
     key_code := event.key;
     if key_code == .UNKNOWN return;
     if !success return;
@@ -647,7 +647,7 @@ shell_handle_keypress :: (is_reading_string: bool = false) -> command: string = 
             }
         }
 
-        event, success = read_event_buffer(*the_first_task.parent_process.input);
+        event, success = read_event_buffer(*the_first_task.process.input);
         if !success break;
         key_code = event.key;
     }
@@ -769,7 +769,7 @@ shell_update_command_lists :: () {
                     new_task := shell_load_program(next_step);
                     if !new_task break;
 
-                    new_task.parent_process.input_data = step.task.parent_process.output_data;
+                    new_task.process.input_data = step.task.process.output_data;
                     new_task.state = .AWAKE;
                     next_step.task = new_task;
                     continue list;
@@ -779,7 +779,7 @@ shell_update_command_lists :: () {
 
         last_task := list[list.count - 1].task;
         if last_task {
-            print_ipc_data(last_task.parent_process.output_data);
+            print_ipc_data(last_task.process.output_data);
             paint_screen();
 
             if shell.text.buffer[shell.text.used - 1] == #char "\n" && shell.text.buffer[shell.text.used - 2] != #char "\n" {
@@ -874,7 +874,7 @@ shell_load_program :: (step: Command_Step) -> *Task_Info {
 
     if kernel_command == null {
         task := load_program(exe, .. args);
-        if task task.parent_process.name = copy_string(step.name);
+        if task task.process.name = copy_string(step.name);
         return task;
     }
 
@@ -882,7 +882,7 @@ shell_load_program :: (step: Command_Step) -> *Task_Info {
         data := map_memory(size_of(Kernel_Command_Startup_Data));
         << cast(*Kernel_Command_Startup_Data) data = .{ kernel_command.procedure, args };
         task := make_task(kernel_command_launcher_task, data);
-        task.parent_process.name = kernel_command.name;
+        task.process.name = kernel_command.name;
         return task;
     }
 

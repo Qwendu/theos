@@ -19,9 +19,9 @@ Also try
     view_image "pictures/florence.ppm"
 
 To add your own pictures to the pictures folder from the host operating system, put them in
-theos/filesystem/pictures, and run "jai-linux first.jai - no_kernel vdi".
+"theos/filesystem/pictures", and run "jai-linux first.jai - no_kernel".
 
 To do a challenging chess puzzle, type
 
     list_directory "chess_files/puzzles"
-    read "chess_files/puzzles/morphy_isouard_1858" | chess HUMAN, CPU, 10
+    read "chess_files/puzzles/morphy_isouard_1858" | chess HUMAN, CEIJ, 10

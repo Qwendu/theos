@@ -987,7 +987,7 @@ AC97_NABMBAR__Dma_Register :: enum u16 {
     PI_CIV__pcm_input_current_index_value :: 0x4;
 
     PO_BDBAR__pcm_output_buffer_desc_list_base :: 0x10;
-    PO_CIV__pcm_output_current_index_value :: 0x14;
+    PO_CIV__pcm_output_current_buffer_index :: 0x14;
     PO_LVI__pcm_output_last_valid_index :: 0x15;
     PO_CR__pcm_output_control :: 0x1b;
 
@@ -1008,11 +1008,18 @@ Ac97_Buffer_Descriptor :: struct {
 }
 
 Ac97 :: struct {
-    address_space: enum { io; main_memory; };
     mixer_base: u64;
     dma_base: u64;
 
+    BUFFER_COUNT :: 32;
+
+    blocksize: int;
+    pcm_buffer: *u16;
+
+    initialized: bool;
     pcm_buffer_list: [] Ac97_Buffer_Descriptor;
+
+    sink_id: s64;
 }
 
 write :: (device: Ac97, r: AC97_NAMBAR__Mixer_Register, value: u16) {
@@ -1044,19 +1051,20 @@ discover_sound_devices :: () {
         if pci.header.class != .MULTIMEDIA  continue;
         if pci.header.subclass != 0x1  continue;
 
+        assert(!ac97.initialized);
+
         command_status := pci_read_config_register(pci, 0x1);
         pci_write_config_register(pci, 0x1, command_status | xx Pci_Command.BUS_MASTER);
 
-        write(ac97, u32, .GLOB_CNT__global_control, 0x2);
-        write(ac97, .RESET, 0xffff);
-
         ac97.mixer_base = pci_get_base_address(pci, 0);
-        ac97.dma_base = pci_get_base_address(pci, 1);
+        ac97.dma_base   = pci_get_base_address(pci, 1);
 
-        ac97.address_space = .io;
+        // write(ac97, u32, .GLOB_CNT__global_control, 0x2);
+        // write(ac97, .RESET, 0xffff);
 
-        ac97.pcm_buffer_list.count = 32;
-        ac97.pcm_buffer_list.data = map_memory(size_of(Ac97_Buffer_Descriptor) * 32, flags = uncacheable);
+        buffer_list_size_bytes := size_of(Ac97_Buffer_Descriptor) * Ac97.BUFFER_COUNT;
+        ac97.pcm_buffer_list.count = Ac97.BUFFER_COUNT;
+        ac97.pcm_buffer_list.data = map_memory(buffer_list_size_bytes, flags = uncacheable, physically_contiguous = true);
 
         phys_base := get_physical_address(ac97.pcm_buffer_list.data);
         assert(phys_base != 0);
@@ -1070,32 +1078,77 @@ discover_sound_devices :: () {
             if (cr & 0x2) == 0  break;
         }, "AC'97 reset timeout");
 
-        buffer_size_samples := 0xfffe;
-        random_seed(<< cast(*Random_State) *get_system_time());
+        ac97.blocksize = AUDIO_BLOCKSIZE;
+        pcm_buffer_size := ac97.blocksize * size_of(u16) * Ac97.BUFFER_COUNT;
+        ac97.pcm_buffer = map_memory(pcm_buffer_size, flags = uncacheable, physically_contiguous = true);
 
         for *ac97.pcm_buffer_list {
-            pcm_buffer := map_memory(buffer_size_samples * size_of(u16), flags = uncacheable);
-
-            it.address = cast(u32) get_physical_address(pcm_buffer);
-            it.length = cast(u16) buffer_size_samples;
-
-            samples := cast(*u16) pcm_buffer;
-            for 0..buffer_size_samples-1 {
-                samples[it] = cast(u16) ((random_get() >> 13) & 0xffff);
-            }
+            it.address = cast(u32) get_physical_address(ac97.pcm_buffer + it_index * ac97.blocksize);
+            it.length = cast(u16) ac97.blocksize;
         }
 
         write(ac97, u32, .PO_BDBAR__pcm_output_buffer_desc_list_base, cast(u32) phys_base);
-        write(ac97, u8, .PO_LVI__pcm_output_last_valid_index, 31);
 
-        // cr = read(ac97, u8, .PO_CR__pcm_output_control);
-        // write(ac97, u8, .PO_CR__pcm_output_control, cr | 1);
+        ac97.initialized = true;
+
+        task := make_task(ac97_feeder);
+        task.process.name = "audio device (ac'97)";
+
+        ac97.sink_id = pool_add(*audio_sink_pool, .{});
+        sink := pool_get(*audio_sink_pool, ac97.sink_id);
+
+        sink.buffer = map_memory(ac97.blocksize * size_of(u16));
+        sink.buffer_consumed = true;
     }
 }
 
-#import "Random";
+frequency := 440.0;
 
+ac97_feeder :: (data: *void) {
+    assert(ac97.initialized);
 
+    write_index: u8;
+
+    phase: float;
+    sample_rate :: 48000.0;
+
+    cr := read(ac97, u8, .PO_CR__pcm_output_control);
+    write(ac97, u8, .PO_CR__pcm_output_control, cr | 1);
+
+    sink := pool_get(*audio_sink_pool, ac97.sink_id);
+
+    while true {
+        read_index := read(ac97, u8, .PO_CIV__pcm_output_current_buffer_index);
+
+        diff := write_index - read_index;
+        if diff > 32 diff += cast(u8) Ac97.BUFFER_COUNT;
+
+        if diff < 2 && !sink.buffer_consumed {
+            samples := ac97.pcm_buffer + write_index * ac97.blocksize;
+
+            memcpy(samples, sink.buffer, ac97.blocksize * size_of(u16));
+            sink.buffer_consumed = true;
+
+            write_index += 1;
+            write_index %= Ac97.BUFFER_COUNT;
+
+            write(ac97, u8, .PO_LVI__pcm_output_last_valid_index, write_index);
+        }
+
+        kernel_sleep_milliseconds(1);
+    }
+}
+
+           /* for 0..ac97.blocksize / 2 - 1 {
+                float_sample := sin(phase * TAU) * 0.5 + 0.5;
+
+                int_sample := cast(u16) (float_sample * 30_000);
+                samples[it * 2]     = int_sample;
+                samples[it * 2 + 1] = int_sample;
+
+                phase += frequency / sample_rate;
+                if phase > 1  phase -= 1;
+            } */
 
 
 
