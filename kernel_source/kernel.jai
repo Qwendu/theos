@@ -1211,12 +1211,12 @@ hpet_enable_interrupts :: (freq: u64) {
     // Tn_SIZE_CAP :: 0x20;
     // assert(timer & Tn_SIZE_CAP > 0, "HPET timer 0 is not 64bit");
 
-    Tn_INT_TYPE_CNF :: 0x2; // Interrupt type (0=edge  1=level)
-    Tn_INT_ENB_CNF :: 0x4;  // Interrupt enable
-    Tn_TYPE_CNF :: 0x8;     // Timer type (0=non-periodic  1=periodic)
-    Tn_VAL_SET_CNF :: 0x40; // Enable 
+    Tn_INT_TYPE_CNF :: 0x2;  // Interrupt type (0=edge  1=level)
+    Tn_INT_ENB_CNF  :: 0x4;  // Interrupt enable
+    Tn_TYPE_CNF     :: 0x8;  // Timer type (0=non-periodic  1=periodic)
+    Tn_VAL_SET_CNF  :: 0x40; // Periodic-mode enable write accumulator
 
-    timer |= (Tn_TYPE_CNF | Tn_INT_ENB_CNF);
+    timer |= (Tn_TYPE_CNF | Tn_INT_ENB_CNF | Tn_VAL_SET_CNF);
     timer &= ~Tn_INT_TYPE_CNF;
 
     write(.TIMER0, timer);

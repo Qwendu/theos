@@ -107,9 +107,9 @@ interrupt_handlers: [] struct {
 
     version_info: Version_Info;
     compiler_get_version_info(*version_info);
-    if memcmp(*version_info, *Version_Info.{0, 1, 50}, size_of(Version_Info)) != 0 {
+    if memcmp(*version_info, *Version_Info.{0, 1, 53}, size_of(Version_Info)) != 0 {
         using version_info;
-        print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.050, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
+        print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.053, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
         print("However there's a chance it works anyway, so continuing\n");
     }
 

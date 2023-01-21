@@ -34,7 +34,6 @@ main :: () {
                 return;
             }
         }
-        // #asm { hlt; }
     }
 }
 

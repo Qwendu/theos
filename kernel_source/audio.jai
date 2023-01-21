@@ -74,7 +74,7 @@ update_audio :: (user: *void) {
             system_mixer.source.buffer_consumed = false;
         }
 
-        kernel_sleep_milliseconds(milliseconds_per_block / 3);
+        kernel_sleep_milliseconds(3);
     }
 }
 
