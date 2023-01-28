@@ -26,9 +26,7 @@ exceptions: [] struct {
     slot: int;
     has_error_code: bool;
 } = .[
-    .{ "Debug exception",                  0x01, false },
     .{ "Non-maskable interrupt exception", 0x02, false },
-    .{ "Breakpoint exception",             0x03, false },
     .{ "Overflow exception",               0x04, false },
     .{ "Bound range exceeded exception",   0x05, false },
     .{ "Device not available exception",   0x07, false },
@@ -50,6 +48,8 @@ interrupt_handlers: [] struct {
     slot: int;
 } = .[
     .{ "zero_division", 0x00 },
+    .{ "debug_exception", 0x01 },
+    .{ "breakpoint_exception", 0x03 },
     .{ "invalid_opcode_exception", 0x06 },
     .{ "gp_exception", 0x0d },
     .{ "hpet_interrupt",  0x20 },
@@ -77,6 +77,7 @@ interrupt_handlers: [] struct {
     no_kernel: bool;
     setup_vm: bool;
     always: bool;
+    optimized: bool;
 
     compile_specific_app: string;
 
@@ -94,6 +95,7 @@ interrupt_handlers: [] struct {
           case "user_all";   all_userspace = true;
           case "no_kernel";  no_kernel = true;
           case "setup_vm";   setup_vm = true;
+          case "optimized";  optimized = true;
           case "help";
             print("\nSee readme.md.\n\n");
             return;
@@ -120,7 +122,7 @@ interrupt_handlers: [] struct {
     }
 
     if setup_vm {
-        if run_vm || !userspace || no_kernel || all_userspace || compile_specific_app.count {
+        if run_vm || !userspace || no_kernel || all_userspace || compile_specific_app.count || optimized {
             write_string("Flags other than \"setup_vm\" are being ignored. You should compile, setup, and run using separate invocations of this program.\n");
         }
 
@@ -179,7 +181,7 @@ interrupt_handlers: [] struct {
     }
 
     if run_vm {
-        if !userspace || no_kernel || all_userspace || compile_specific_app.count {
+        if !userspace || no_kernel || all_userspace || compile_specific_app.count || optimized {
             write_string("Flags other than \"run_vm\" are being ignored. You should compile and run using separate invocations of this program.\n");
         }
 
@@ -572,7 +574,7 @@ interrupt_handlers: [] struct {
                 }
 
                 context.logger = (message: string, *void, Log_Info) {};
-                successful += cast(int) build_formosa_app(name);
+                successful += cast(int) build_formosa_app(name, optimized);
                 recompiled += 1;
             }
 
@@ -818,13 +820,15 @@ patch_procedure_linkage_table :: (elf_file: [] u8, patches: [] Plt_Patch, defaul
         plt_entry_count := header.sh_size / PLT_ENTRY_SIZE;
         if !silent print("PLT entry count: %\n", plt_entry_count);
 
-        for 1..plt_entry_count-1 {
+        for 0..plt_entry_count {
             plt_offset := PLT_ENTRY_SIZE * it;
             patch_target           := plt_offset + xx header.sh_offset;
             source_virtual_address := plt_offset + xx header.sh_addr + 5;
 
             jump := xx default_addresses[it] - source_virtual_address;
 
+            // memcpy(elf.data + patch_target, "\x66\xB8\x04\x40\x66\xBA\x00\x34\x66\xEF".data, 10);
+            // print("Patch target: %\n", formatInt(patch_target, base = 16));
             elf.data[patch_target] = 0xe9;
             << (cast(*s32) (elf.data + patch_target + 1)) = xx jump;
         }
@@ -882,7 +886,7 @@ isr_slot_0x% :: (stack_data: *Interrupt_Data) #c_call {
         print("\n   Interrupt frame:\n");
         print("   RIP:    "); print_hex(stack_data.ip);    print("\n");
         print("   CS:     "); print_hex(stack_data.cs);    print("\n");
-        print("   FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("   FLAGS:  "); print_hex(cast(u64) stack_data.flags); print("\n");
         print("   SP:     "); print_hex(stack_data.sp);    print("\n");
         print("   SS:     "); print_hex(stack_data.ss);    print("\n");
 

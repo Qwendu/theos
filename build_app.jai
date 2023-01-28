@@ -1,5 +1,4 @@
 
-
 // Metaprogram to build a Jai program into the custom executable format that we can load and run
 // See modules/Formosa_Executable_Format.jai
 
@@ -31,14 +30,14 @@ build_formosa_app :: (name: string, optimize: bool = false) -> bool {
 
         options.disable_redzone = true;
 
-        // if optimize set_optimization_level(*options, 3, 3);
+        if optimize set_optimization_level(*options, 3, 0);
 
         options.stack_trace = true;
         options.array_bounds_check = .OFF;
         options.cast\_bounds_check = .OFF;
         options.math\_bounds_check = .OFF;
         options.null_pointer_check = .OFF;
-        options.dead_code_elimination = .NONE;
+        options.dead_code_elimination = .MODULES_ONLY;
 
         options.llvm_options.disable_inlining = true;
 
@@ -49,7 +48,7 @@ build_formosa_app :: (name: string, optimize: bool = false) -> bool {
         array_add(*new_path, ..options.import_path);
         options.import_path = new_path;
 
-        options.additional_linker_arguments = .["-e", "_formosa_start"];
+        options.additional_linker_arguments = .["-e", "_formosa_start", "-lz"];
 
         set_build_options(options, w);
 
@@ -163,26 +162,30 @@ build_formosa_app :: (name: string, optimize: bool = false) -> bool {
 
     {
         patches := Plt_Patch.[
-            .{source = "crt_memset",  target = "memset"},
-            .{source = "crt_memcpy",  target = "memcpy"},
-            .{source = "crt_memcmp",  target = "memcmp"},
-            .{source = "crt_memmove", target = "memmove"},
-            .{source = "crt_strcmp",  target = "strcmp"},
-            .{source = "crt_strlen",  target = "strlen"},
-            .{source = "crt_strstr",  target = "strstr"},
-            .{source = "crt_malloc",  target = "malloc"},
-            .{source = "crt_free",    target = "free"},
-            .{source = "crt_realloc", target = "realloc"},
-            .{source = "crt_chdir",   target = "chdir"},
-            .{source = "crt_getenv",  target = "getenv"},
-            .{source = "crt_fopen",   target = "fopen"},
-            .{source = "crt_fread",   target = "fread"},
-            .{source = "crt_fclose",  target = "fclose"},
-            .{source = "crt_fseek",   target = "fseek"},
+            .{source = "crt_memset",    target = "memset"},
+            .{source = "crt_memcpy",    target = "memcpy"},
+            .{source = "crt_memcmp",    target = "memcmp"},
+            .{source = "crt_memmove",   target = "memmove"},
+            .{source = "crt_strcmp",    target = "strcmp"},
+            .{source = "crt_strlen",    target = "strlen"},
+            .{source = "crt_strstr",    target = "strstr"},
+            .{source = "crt_malloc",    target = "malloc"},
+            .{source = "crt_calloc",    target = "calloc"},
+            .{source = "crt_free",      target = "free"},
+            .{source = "crt_realloc",   target = "realloc"},
+            .{source = "crt_chdir",     target = "chdir"},
+            .{source = "crt_getenv",    target = "getenv"},
+            .{source = "crt_fopen",     target = "fopen"},
+            .{source = "crt_fread",     target = "fread"},
+            .{source = "crt_fclose",    target = "fclose"},
+            .{source = "crt_fseek",     target = "fseek"},
             .{source = "crt_clock_gettime", target = "clock_gettime"},
-            .{source = "crt_fmod",    target = "fmod"},
-            .{source = "crt_fmodf",   target = "fmodf"},
-            .{source = "crt_write",   target = "write"},
+            .{source = "crt_fmod",      target = "fmod"},
+            .{source = "crt_fmodf",     target = "fmodf"},
+            .{source = "crt_write",     target = "write"},
+            .{source = "crt_setjmp",    target = "_setjmp"},
+            .{source = "crt_nanosleep", target = "nanosleep"},
+            .{source = "crt_mmap",      target = "mmap"},
             .{source = "crt_pthread_mutex_init",        target = "pthread_mutex_init"},
             .{source = "crt_pthread_mutexattr_init",    target = "pthread_mutexattr_init"},
             .{source = "crt_pthread_mutexattr_settype", target = "pthread_mutexattr_settype"},

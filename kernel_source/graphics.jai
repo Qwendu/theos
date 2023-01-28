@@ -712,7 +712,7 @@ printf :: (format: string, args: .. Any) {
 }
 
 printf :: (format: string, args: .. Any, color: Color) {
-    result := Basic.tprint(format, .. args);
+    result := tprint(format, .. args);
     print(result, color);
 }
 

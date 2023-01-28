@@ -26,7 +26,7 @@
 
     jmp 0:start
 
-%include "generated.asm"
+%include ".build/generated.asm"
 
 start:
     ; === Segment registers ===

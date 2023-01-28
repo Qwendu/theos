@@ -695,6 +695,7 @@ make_context :: () -> Context #no_context {
 
 my_log :: (message: string, data: *void, info: Log_Info) {
     write_string(message);
+    write_string("\n");
 }
 
 allocate_memory :: (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: *void, user_data: *void) -> *void {

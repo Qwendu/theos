@@ -45,7 +45,8 @@ get_mouse_pointer_position :: inline (right_handed := false) -> x: int, y: int, 
 
 get_mouse_pointer_position :: (w: Window_Handle, right_handed: bool) -> (x: int, y: int, success: bool) {
     x, y := get_mouse_position(w);
-    return x, y, true;
+    sx, sy := get_window_size(w);
+    return x, sy - y, true;
 }
 
 get_dimensions :: (w: Window_Handle, right_handed: bool) -> (x: s32, y: s32, width: s32, height: s32, success := true) {

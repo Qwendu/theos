@@ -26,6 +26,7 @@ Task_Info :: struct {
         SLEEPING;
         BLOCKED;
         JOINING;
+        DEBUG_MODE;
         EXITING;
         RETIRED;
     };
@@ -41,11 +42,14 @@ Task_Info :: struct {
         output_data: Any;
 
         used_memory: int;
-
         name: string;
     };
 
     subtasks: [..] *Task_Info;
+
+    debug_stack: *Interrupt_Data;
+    breakpoint: u64;
+    breakpoint_enabled: bool;
 }
 
 Xsave_Area :: struct {
@@ -93,6 +97,12 @@ initialize_task_manager :: () {
 
     the_first_task.next = *the_first_task;
     idle_task.next = *the_first_task;
+
+    dr7: u64;
+    #asm { get_dr7 dr7; }
+    dr7 &= ~(1 << 16);
+    dr7 &= ~(1 << 17);
+    #asm { set_dr7 dr7; }
 }
 
 last_task_switch_timestamp: Apollo_Time;
@@ -103,6 +113,24 @@ switch_to_task :: (new: *Task_Info) {
     last_task_switch_timestamp = now;
 
     current := *current_task;
+
+    if new.breakpoint_enabled {
+        breakpoint := new.breakpoint;
+        assert(breakpoint != 0);
+
+        #asm {
+            set_dr0 breakpoint;
+            get_dr7 dr7:;
+            or dr7, 0x2;
+            set_dr7 dr7;
+        }
+    } else {
+        #asm {
+            get_dr7 dr7:;
+            and dr7, -3;
+            set_dr7 dr7;
+        }
+    }
 
     tls := new.thread_storage;
     #asm FSGSBASE {
@@ -126,7 +154,7 @@ new_task_start :: () #no_context {
     }
 }
 
-make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size := 0x10_0000) -> *Task_Info {
+make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size := 0x100_0000) -> *Task_Info {
     task := cast(*Task_Info) map_memory(size_of(Task_Info));
 
     task.stack_bottom = map_memory(stack_size) + stack_size;
@@ -242,7 +270,7 @@ exit :: () {
         retired_tasks = it;
     }
 
-    for *windows if it.exists && it.owner == task  close_window(it_index);
+    for windows if it.exists if it.owner == task  close_window(it_index);
 
     task.state = .EXITING;
 
@@ -290,6 +318,25 @@ preempt :: (rip: u64) #no_context {
     }
 }
 
+waking_tasks: struct {}
+for_expansion :: (tasks: *type_of(waking_tasks), body: Code, flags: For_Flags) #expand {
+    #assert(flags == 0);
+
+    `it_index := -1; //`
+    task := *the_first_task;
+
+    while true {
+        it_index += 1;
+        `it := task; //`
+
+        if task == *the_first_task && (it_index != 0 || the_first_task.next == *the_first_task) {
+            break;
+        }
+        task = task.next;
+
+        #insert body;
+    }
+}
 
 
 
@@ -443,18 +490,196 @@ move_to_front :: (window: Window_Handle) {
 }
 
 
-MAX_FILE_POINTERS :: 64;
-file_pointers: [MAX_FILE_POINTERS] File_Pointer;
 
-File_Pointer :: struct {
-    inode_id: int;
-    reference_count: int;
+DR7__Debug_Control :: enum_flags u64 {
+
 }
 
-MAX_FILE_DESCRIPTORS :: 64;
-file_descriptors: [MAX_FILE_DESCRIPTORS] File_Descriptor;
+DR6__Debug_Status :: enum_flags u64 {
+    B0__breakpoint_0           :: 0x1;
+    B1__breakpoint_1           :: 0x2;
+    B2__breakpoint_2           :: 0x4;
+    B3__breakpoint_3           :: 0x8;
 
-File_Descriptor :: struct {
-    file_pointer_id: int;
-    has_write_access: bool;
+    BD__debug_register_access  :: 0x2000;
+    BS__single_step            :: 0x4000;
+    BT__task_switch            :: 0x8000;
+    RTM__restricted_memory     :: 0x10000;
+}
+
+#program_export
+breakpoint_exception :: (stack_data: *Interrupt_Data) #c_call {
+    push_context make_context() {
+        if current_task == *the_first_task {
+            print("Ignoring kernel debug break.\n");
+            return;
+        }
+
+        current_task.state = .DEBUG_MODE;
+        current_task.debug_stack = stack_data;
+        if shell.foreground_task == current_task {
+            shell.foreground_task = *the_first_task;
+        }
+
+        // HexMode();
+        printf("The task \"%\" has broken into the debugger (int3)\nRIP = 0x%\n", current_task.process.name, cast(*void) stack_data.ip);
+        yield();
+    }
+}
+
+#program_export
+debug_exception :: (stack_data: *Interrupt_Data) #c_call {
+    push_context make_context() {
+        reason: DR6__Debug_Status;
+        #asm {
+            get_dr6 reason;
+        }
+
+        if reason & .BS__single_step {
+            printf("Stepping \"%\".\nRIP = 0x%\n", current_task.process.name, cast(*void) stack_data.ip);
+
+            current_task.debug_stack = stack_data;
+            current_task.state = .DEBUG_MODE;
+
+            yield();
+        } else if reason & .B0__breakpoint_0 {
+            printf("Process % hit breakpoint at %\n", current_task.process.name, cast(*void) stack_data.ip);
+
+            current_task.debug_stack = stack_data;
+            current_task.state = .DEBUG_MODE;
+
+            yield();
+        } else {
+            printf("Debug status: %\n", reason);
+        }
+    }
+}
+
+GetName :: (args: [] Any) -> string #expand {
+    nothing: Any;
+    if args.count < 1 `return nothing; //`
+    _name := args[0];
+    if _name.type.type != .STRING `return nothing; // `
+    name := << cast(*string) _name.value_pointer;
+    return name;
+}
+
+cmd_debug_set_breakpoint :: (args: ..Any) -> Any {
+    nothing: Any;
+    name := GetName(args);
+
+    if args.count < 2 return nothing;
+
+    address: u64;
+    if args[1].type.type == .INTEGER {
+        address := << cast(*u64) args[1].value_pointer;
+    } else if args[1].type.type == .STRING {
+        t := << cast(*string) args[1].value_pointer;
+        success: bool;
+        address, success = string_to_int(t, base = 0x10, T = u64);
+        assert(success);
+    }
+
+    for waking_tasks {
+        if it.process.name != name {
+            continue;
+        }
+
+        set_address_space(it.page_table);
+        defer set_address_space(current_task.page_table);
+
+        it.breakpoint = address;
+
+        HexMode();
+        if it.breakpoint {
+            printf("Setting breakpoint for % at %\n", name, address);
+            it.breakpoint_enabled = true;
+        } /* else {
+            printf("No linear address for breakpoint in % at %\n", name, address);
+        } */
+
+        return nothing;
+    }
+
+    printf("The task \"%\" does not exist or is not scheduled.\n", name);
+    return nothing;
+}
+
+cmd_debug_single_step :: (args: ..Any) -> Any {
+    nothing: Any;
+    name := GetName(args);
+
+    for waking_tasks {
+        if it.process.name != name {
+            continue;
+        }
+
+        if it.state != .DEBUG_MODE {
+            printf("The task \"%\" is not in debug mode.\n", name);
+            return nothing;
+        }
+
+        set_address_space(it.page_table);
+        defer set_address_space(current_task.page_table);
+
+        it.debug_stack.flags |= .TF__trap;
+        it.state = .AWAKE;
+
+        return nothing;
+    }
+
+    printf("The task \"%\" does not exist or is not scheduled.\n", name);
+    return nothing;
+}
+
+cmd_debug_registers :: (args: ..Any) -> Any {
+    nothing: Any;
+    name := GetName(args);
+
+    for waking_tasks {
+        if it.process.name != name {
+            continue;
+        }
+
+        if it.state != .DEBUG_MODE {
+            printf("The task \"%\" is not in debug mode.\n", name);
+            return nothing;
+        }
+
+        set_address_space(it.page_table);
+        defer set_address_space(current_task.page_table);
+
+        LongForm();
+        HexMode();
+        printf("The registers are: %\n", << it.debug_stack);
+
+        return nothing;
+    }
+
+    printf("The task \"%\" does not exist or is not scheduled.\n", name);
+    return nothing;
+}
+
+cmd_debug_continue :: (args: ..Any) -> Any {
+    nothing: Any;
+    name := GetName(args);
+
+    for waking_tasks {
+        if it.process.name != name {
+            continue;
+        }
+
+        if it.state != .DEBUG_MODE {
+            printf("The task \"%\" is not in debug mode.\n", name);
+            return nothing;
+        }
+
+        it.state = .AWAKE;
+        it.debug_stack.flags &= ~.TF__trap;
+
+        return nothing;
+    }
+
+    printf("The task \"%\" does not exist or is not scheduled.\n", name);
+    return nothing;
 }

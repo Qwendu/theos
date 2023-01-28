@@ -79,6 +79,7 @@ kernel_entry :: () {
         boot_time = formosa_calendar_to_apollo(ct);
 
         initialize_task_manager();
+        current_task.the_context = *context;
 
         hpet_enable_interrupts(100);
 
@@ -89,6 +90,7 @@ kernel_entry :: () {
             assert(boot_drive == null);
             boot_drive = it;
         }
+
 
         assert(!!boot_drive, "Could not find the boot disk. Only SATA disks are supported, not NVMe or USB.");
 
@@ -142,7 +144,7 @@ kernel_entry :: () {
             shell_handle_text_command(it);
             update_shell();
 
-            kernel_sleep_milliseconds(10);
+            yield(); kernel_sleep_milliseconds(20);
         }
 
         paint_screen();
@@ -527,10 +529,23 @@ gdt_init :: () {
 
 
 
+X64_Flags :: enum_flags u64 {
+    CF__carry  :: 0x1;
+    PF__parity :: 0x4;
+    AF__adjust :: 0x10;
+    ZF__zero   :: 0x40;
+    SF__sign   :: 0x80;
+    TF__trap   :: 0x100;
+    IF__interrupt :: 0x200;
+    DF__direction :: 0x400;
+    OF__overflow  :: 0x800;
+    RF__resume    :: 0x10000;
+}
+
 Interrupt_Stack_Frame :: struct {
     ip:    u64;
     cs:    u64;
-    flags: u64;
+    flags: X64_Flags;
     sp:    u64;
     ss:    u64;
 }
@@ -1550,10 +1565,10 @@ get_physical_address :: (virtual_address: *void) -> u64, present: bool {
         return table[index];
     }
 
-    root_table := pml4.data;
-    if current_task {
-        root_table = to_virtual(current_task.page_table);
-    }
+    cr3: u64;
+    #asm { get_cr3 cr3; }
+    root_table := to_virtual(cr3);
+
     pml4e := root_table[pml4_offset];
 
     pdpte := ReadTableEntry(pdpt_offset, pml4e);
@@ -1601,7 +1616,7 @@ page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
         print("\nInterrupt frame:\n");
         print("RIP:    "); print_hex(stack_data.ip);    print("\n");
         print("CS:     "); print_hex(stack_data.cs);    print("\n");
-        print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("FLAGS:  "); print_hex(cast(u64) stack_data.flags); print("\n");
         print("SP:     "); print_hex(stack_data.sp);    print("\n");
         print("SS:     "); print_hex(stack_data.ss);    print("\n");
 
@@ -1779,6 +1794,9 @@ create_address_space :: () -> u64 {
     return get_physical_address(page_table.data);
 }
 
+set_address_space :: (page_table: u64) {
+    #asm { set_cr3 page_table; }
+}
 
 #import "Formosa_Executable_Format";
 
@@ -2430,8 +2448,11 @@ LongForm :: () #expand {
 }
 
 HexMode :: () #expand {
+    old := context.print_style.default_format_int;
+    `defer context.print_style.default_format_int = old; //`
     context.print_style.default_format_int.base = 16;
-    `defer context.print_style.default_format_int.base = 10; //`
+    context.print_style.default_format_int.digits_per_comma = 4;
+    context.print_style.default_format_int.comma_string = "_";
 }
 
 Timeout :: (code: Code, message := "", time := 1000) #expand {
@@ -2472,7 +2493,7 @@ invalid_opcode_exception :: (stack_data: *Interrupt_Data) #c_call {
         print("Interrupt stack:\n");
         print("RIP:    "); print_hex(stack_data.ip);    print("\n");
         print("CS:     "); print_hex(stack_data.cs);    print("\n");
-        print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("FLAGS:  "); print_hex(cast(u64) stack_data.flags); print("\n");
         print("SP:     "); print_hex(stack_data.sp);    print("\n");
         print("SS:     "); print_hex(stack_data.ss);    print("\n");
 
@@ -2524,13 +2545,13 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
         print("Interrupt stack:\n");
         print("RIP:    "); print_hex(stack_data.ip);    print("\n");
         print("CS:     "); print_hex(stack_data.cs);    print("\n");
-        print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("FLAGS:  "); print_hex(cast(u64) stack_data.flags); print("\n");
         print("SP:     "); print_hex(stack_data.sp);    print("\n");
         print("SS:     "); print_hex(stack_data.ss);    print("\n");
 
         paint_screen();
 
-        #if PAGE_FAULT_STACK_TRACE && false {
+        #if PAGE_FAULT_STACK_TRACE {
             if current_task && current_task.the_context {
                 print("\nStack trace:\n");
                 node := current_task.the_context.stack_trace;
@@ -2551,28 +2572,30 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
             }
         }
 
-        print("Memory around the stack pointer:\n");
-        for -32 .. 31 {
-            if it % 8 == 0 {
-                print("\n");
-                if it == 0 print_hex(stack_data.sp + xx it, color = theme.accent);
-                else print_hex(stack_data.sp + xx it);
-                print(":   ");
+        if false {
+            print("Memory around the stack pointer:\n");
+            for -32 .. 31 {
+                if it % 8 == 0 {
+                    print("\n");
+                    if it == 0 print_hex(stack_data.sp + xx it, color = theme.accent);
+                    else print_hex(stack_data.sp + xx it);
+                    print(":   ");
+                }
+                print_hex((cast(*u8) stack_data.sp)[it], decorate = false);
+                print(" ");
             }
-            print_hex((cast(*u8) stack_data.sp)[it], decorate = false);
-            print(" ");
-        }
 
-        print("\n\nMemory around the instruction pointer:\n");
-        for -32 .. 31 {
-            if it % 8 == 0 {
-                print("\n");
-                if it == 0 print_hex(stack_data.ip + xx it, color = theme.accent);
-                else print_hex(stack_data.ip + xx it);
-                print(":   ");
+            print("\n\nMemory around the instruction pointer:\n");
+            for -32 .. 31 {
+                if it % 8 == 0 {
+                    print("\n");
+                    if it == 0 print_hex(stack_data.ip + xx it, color = theme.accent);
+                    else print_hex(stack_data.ip + xx it);
+                    print(":   ");
+                }
+                print_hex((cast(*u8) stack_data.ip)[it], decorate = false);
+                print(" ");
             }
-            print_hex((cast(*u8) stack_data.ip)[it], decorate = false);
-            print(" ");
         }
 
         if current_task != *the_first_task {
@@ -2599,7 +2622,7 @@ zero_division :: (stack_data: *Interrupt_Data) #c_call {
         print("Interrupt stack:\n");
         print("RIP:    "); print_hex(stack_data.ip);    print("\n");
         print("CS:     "); print_hex(stack_data.cs);    print("\n");
-        print("FLAGS:  "); print_hex(stack_data.flags); print("\n");
+        print("FLAGS:  "); print_hex(cast(u64) stack_data.flags); print("\n");
         print("SP:     "); print_hex(stack_data.sp);    print("\n");
         print("SS:     "); print_hex(stack_data.ss);    print("\n");
 

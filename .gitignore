@@ -7,6 +7,9 @@ modules/Input/
 modules/.build/*
 modules/Simp/
 modules/Windows.jai
+modules/GetRect/
+modules/freetype-2.12.1
+modules/stb_image
 
 program
 *.lock
@@ -54,7 +57,10 @@ filesystem/programs/example
 filesystem/programs/create_many_files
 filesystem/programs/sleep_test
 filesystem/programs/cpu_time_test
-
+filesystem/programs/debug_test
+filesystem/programs/getrect_example
+filesystem/programs/gol
+filesystem/programs/simp_example
 .#*
 
 test
@@ -70,6 +76,9 @@ userspace_apps/chess_engine/_libnnueprobe.a
 userspace/paint.jai
 userspace/example.jai
 userspace/modules_test.jai
+userspace/getrect_example.jai
+userspace/simp_example.jai
+userspace/gol.jai
 
 filesystem/system/keyboard_layouts/ansi_us_qwerty.xml
 
@@ -81,3 +90,6 @@ update.txt
 userspace/chess_engine/nnue_objdump.txt
 filesystem/programs/olivec_demo
 filesystem/programs/music_player
+filesystem/getrect_data
+filesystem/programs/jaibreak
+filesystem/programs/jaibreak_exe

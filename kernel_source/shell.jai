@@ -14,6 +14,11 @@ kernel_commands :: Kernel_Command.[
     .{ "storage", cmd_list_storage, .[] },
     .{ "windows", cmd_list_windows, .[] },
     .{ "clear", cmd_clear, .[] },
+
+    .{ "continue",  cmd_debug_continue, .[] },
+    .{ "r",         cmd_debug_registers, .[] },
+    .{ "step",      cmd_debug_single_step, .[] },
+    .{ "break",     cmd_debug_set_breakpoint, .[] },
 ];
 
 cmd_clear :: (args: ..Any) -> Any {

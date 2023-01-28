@@ -44,21 +44,40 @@ crt_chdir :: (path: *u8) -> s32 #c_call {
     return 0;
 }
 
+#import "Hash_Table";
+allocation_sizes: Table(*void, u64);
+
 #program_export
 crt_malloc :: (size: u64) -> *void #c_call {
-    return map_memory(xx size);
+    address := map_memory(cast,trunc(s64) size);
+    push_context make_context() { table_add(*allocation_sizes, address, size); }
+    return address;
+}
+
+#program_export
+crt_calloc :: (nmemb: u64, size: u64) -> *void #c_call {
+    address := map_memory(cast,trunc(s64) (size * nmemb));
+    push_context make_context() { table_add(*allocation_sizes, address, size); }
+    return address;
 }
 
 #program_export
 crt_free :: (ptr: *void) #c_call {
+    push_context make_context() { table_remove(*allocation_sizes, ptr); }
     return;
 }
 
 #program_export
 crt_realloc :: (ptr: *void, size: u64) -> *void #c_call {
-    new_buffer := map_memory(xx size);
-    memcpy(new_buffer, ptr, xx size);
-    return new_buffer;
+    if !ptr return map_memory(xx size);
+
+    push_context make_context() {
+        old_size, success := table_find(*allocation_sizes, ptr);
+        if !success #asm { cli; hlt; }
+        new_buffer := map_memory(xx size);
+        memcpy(new_buffer, ptr, xx old_size);
+        return new_buffer;
+    }
 }
 
 #program_export
@@ -105,12 +124,14 @@ crt_getenv :: (name: *u8) -> *u8 #c_call {
     while name[variable_name.count] != 0 variable_name.count += 1;
 
     // The sophisticated way in which environment variables work in this operating system
-    if variable_name == "FREETYPE_PROPERTIES"  return "freetype\0".data;
-    else {
+    if variable_name == "FREETYPE_PROPERTIES" {
+        return "freetype\0".data;
+    } else {
         write_string("Environment variable accessed: ");
         write_string(variable_name);
         write_string("\n");
     }
+
     return "\0".data;
 }
 
@@ -168,15 +189,15 @@ crt_fseek :: (stream: *FILE, offset: s64, whence: s32) -> s32 #c_call {
 
 #program_export
 crt_clock_gettime :: (clockid_t: s32, out_ts: *void) -> s32 #c_call {
-//    Sadness :: #import "Basic";
-//    #import "POSIX";
-//
-//    push_context make_context() {
-//        time := formosa_get_time();
-//        ts, success := Sadness.to_timespec(<< cast(*Sadness.Apollo_Time) *time);
-//        if !success  return -1;
-//        << cast(*timespec) out_ts = ts;
-//    }
+    Sadness :: #import "Basic";
+    POSIX :: #import "POSIX";
+
+    push_context make_context() {
+        time := formosa_get_time();
+        ts, success := Sadness.to_timespec(<< cast(*Sadness.Apollo_Time) *time);
+        if !success  return -1;
+        << cast(*POSIX.timespec) out_ts = ts;
+    }
 
     return 0;
 }
@@ -217,6 +238,11 @@ crt_pthread_mutex_lock :: (mutex: *void) -> s32 #c_call {
 }
 
 #program_export
+crt_setjmp :: (env: *void) -> s32 #c_call {
+    return 0;
+}
+
+#program_export
 crt_write :: (fd: s32, buffer: *u8, count: u64) -> u64 #c_call {
     message: string;
     message.count = cast(int) count;
@@ -224,18 +250,22 @@ crt_write :: (fd: s32, buffer: *u8, count: u64) -> u64 #c_call {
 
     if fd == 0 || fd == 1 {
         write_string(message);
+    } else {
+        write_string("Hm.\n\n");
     }
 
     return count;
 }
 
-timespec :: struct {
-    tv_sec:  s64;
-    tv_nsec: s64;
-}
+    timespec :: struct {
+        tv_sec:  s64;
+        tv_nsec: s64;
+    }
 
 #program_export
-nanosleep :: (ts: *timespec, rem: *timespec) -> s32 #c_call {
+crt_nanosleep :: (ts: *timespec, _rem: *timespec) -> s32 #c_call {
+
+    rem := cast(*timespec) _rem;
     operator + :: (a: Apollo, b: Apollo) -> Apollo #no_context {
         c: Apollo = ---;
         p := *c; // We would like to not have to do this, but #asm doesn't let us put c yet.
@@ -289,4 +319,9 @@ nanosleep :: (ts: *timespec, rem: *timespec) -> s32 #c_call {
 
     if rem then << rem = .{};
     return 0;
+}
+
+#program_export
+crt_mmap :: (addr: *void, length: u64, prot: s32, flags: s32, fd: s32, offset: u64) -> *void #c_call {
+    return map_memory(xx length);
 }
