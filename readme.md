@@ -12,7 +12,8 @@ You have to compile on linux. I usually compile in WSL and then run it on window
 (Use jai-linux for the last two if you're actually on linux rather than in WSL + Windows)
 
 The `filesystem/` directory will be the root of the filesystem on the disk image. You can add files there if you want to access them from within the operating system. You can then use `jai-linux first.jai - no_kernel` to add them to the disk image without recompiling everything.
-### Screenshot
-![](screenshot.png)
 
 If you have questions or comments please message me on discord: dlandahl#8582
+
+### Screenshot
+![](screenshot.png)
