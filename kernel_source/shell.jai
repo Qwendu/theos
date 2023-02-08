@@ -128,6 +128,7 @@ cmd_list_tasks :: (args: ..Any) -> Any {
         memory: int; @Formosa.bytes
         wall_time: Apollo_Time; @Formosa.apolloConcise
         cpu_time: Apollo_Time; @Formosa.apolloConcise
+        percent: int; @Formosa.name(%)
     }
 
     task_list := New([..] Task_Status);
@@ -139,6 +140,7 @@ cmd_list_tasks :: (args: ..Any) -> Any {
         new.memory = task.process.used_memory;
         new.wall_time = get_system_time() - task.start_time;
         new.cpu_time = get_cpu_time(task);
+        new.percent = cast(int) (cast(float) to_milliseconds(new.cpu_time) / cast(float) to_milliseconds(new.wall_time) * 100);
 
         if task == idle_task break;
         if task.next == *the_first_task task = idle_task;
@@ -1213,16 +1215,19 @@ represent_apollo_delta_concise :: (time: Apollo_Time) -> string {
     minutes      -= hours        * 60;
     hours        -= days         * 24;
 
-    context.print_style.default_format_int.minimum_digits = 2;
-    defer context.print_style.default_format_int.minimum_digits = 1;
+    c := context;
+    push_context c {
+        context.print_style.default_format_int.minimum_digits = 2;
+        context.print_style.default_format_int.padding = #char " ";
 
-    result := tprint("%ms", formatInt(milliseconds, minimum_digits = 3));
-    if seconds > 0 result = join(tprint("%s ", seconds), result);
-    if minutes > 0 result = join(tprint("%m ", minutes), result);
-    if hours > 0 result = join(tprint("%h ", hours), result);
-    if days > 0 result = join(tprint("%d ", days), result);
+        result := tprint("%ms", formatInt(milliseconds, minimum_digits=3, padding=#char" "));
+        if seconds > 0 result = join(tprint("%s ", seconds), result);
+        if minutes > 0 result = join(tprint("%m ", minutes), result);
+        if hours > 0 result = join(tprint("%h ", hours), result);
+        if days > 0 result = join(tprint("%d ", days), result);
 
-    return result;
+        return result;
+    }
 }
 
 represent_bytes :: (bytes: u64) -> string {
@@ -1254,7 +1259,22 @@ print_ipc_data :: (value: Any) {
 
             // Calculate widths:
             for tis.members {
-                if it.name.count > widths[it_index]  widths[it_index] = it.name.count;
+                handled: bool;
+
+                for note: it.notes {
+                    if starts_with(note, "Formosa.name") {
+                        name: string;
+                        name.data = note.data + "Formosa.name(".count;
+                        name.count = note.count - "Formosa.name(".count - 1;
+
+                        widths[it_index] = name.count;
+                        handled = true;
+                    }
+                }
+
+                if !handled {
+                    widths[it_index] = it.name.count;
+                }
             }
 
             for index: 0..array.count - 1 {
@@ -1321,13 +1341,24 @@ print_ipc_data :: (value: Any) {
             number_of_dashes: int = 5;
             print("| # ");
             if array.count > 10 {
+
                 print(" ");
                 number_of_dashes += 1;
             }
 
             for tis.members {
-                printf("| % ", it.name);
-                for 0..widths[it_index] - it.name.count - 1  print(" ");
+                name := it.name;
+
+                for note: it.notes {
+                    if starts_with(note, "Formosa.name") {
+                        name.data = note.data + "Formosa.name(".count;
+                        name.count = note.count - "Formosa.name(".count - 1;
+                    }
+                }
+
+                printf("| % ", name);
+                for 0..widths[it_index] - name.count - 1  print(" ");
+                
                 number_of_dashes += widths[it_index] + 3;
             }
             print("|\n");
