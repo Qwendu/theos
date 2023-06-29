@@ -110,11 +110,17 @@ trivial_evaluation :: (using chess: *Chess, fifty: int) -> bool, int {
   }
   return false, 0;
 
-  WIN_SCORE :: 5_000;
+}
+
+nnue :: #library,no_dll "libnnueprobe";
+__nnue_init :: (data: *u8, size: u64) #c_call #foreign nnue "nnue_init"; 
+__nnue_evaluate_incr :: (player: s32, pieces: *s32, squares: *s32, nnue_data: **NNUEdata) -> s32 #foreign nnue "nnue_evaluate_incremental";
+//__nnue_evaluate :: (player: s32, pieces: *s32, squares: *s32) -> s32 #foreign nnue "nnue_evaluate";
 
   eval_winning_position :: (strong_king: u64, q: u64, r: u64, b: u64, n: u64, p: u64, weak_king: u64) -> int {
     win := bit_scan_forward(strong_king);
     los := bit_scan_forward(weak_king);
+  WIN_SCORE :: 5_000;
 
     winx := win / 8;
     winy := win % 8;
@@ -134,6 +140,7 @@ trivial_evaluation :: (using chess: *Chess, fifty: int) -> bool, int {
     }
 
     return WIN_SCORE + push_close + edge + mat + pawn_points;
+  }
 
     push_to_edge :: (sq: int) -> int {
       r := sq / 8;
@@ -153,10 +160,3 @@ trivial_evaluation :: (using chess: *Chess, fifty: int) -> bool, int {
      25,  25,  25,  25,  25,  25,  25,  25,
       0,   0,   0,   0,   0,   0,   0,   0,
     ];
-  }
-}
-
-nnue :: #library,no_dll "libnnueprobe";
-__nnue_init :: (data: *u8, size: u64) #c_call #foreign nnue "nnue_init"; 
-__nnue_evaluate_incr :: (player: s32, pieces: *s32, squares: *s32, nnue_data: **NNUEdata) -> s32 #foreign nnue "nnue_evaluate_incremental";
-//__nnue_evaluate :: (player: s32, pieces: *s32, squares: *s32) -> s32 #foreign nnue "nnue_evaluate";

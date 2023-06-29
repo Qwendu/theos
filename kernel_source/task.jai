@@ -85,6 +85,9 @@ initialize_task_manager :: () {
     the_first_task.process.name = "kernel";
     the_first_task.xsave_area = map_memory(size_of(Xsave_Area));
 
+    xsave_mxcsr := cast(*void) the_first_task.xsave_area + 24;
+    #asm { stmxcsr [xsave_mxcsr]; }
+
     current_task = *the_first_task;
 
     now := get_system_time();
@@ -94,6 +97,9 @@ initialize_task_manager :: () {
     idle_task = make_task(idle, stack_size = 0x400);
     idle_task.process.name = "idle";
     idle_task.xsave_area = map_memory(size_of(Xsave_Area));
+
+    xsave_mxcsr = cast(*void) idle_task.xsave_area + 24;
+    #asm { stmxcsr [xsave_mxcsr]; }
 
     the_first_task.next = *the_first_task;
     idle_task.next = *the_first_task;
@@ -133,6 +139,7 @@ switch_to_task :: (new: *Task_Info) {
     }
 
     tls := new.thread_storage;
+
     #asm FSGSBASE {
         wrfsbase tls;
         mov rbx: gpr === b, new;
@@ -154,7 +161,7 @@ new_task_start :: () #no_context {
     }
 }
 
-make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size := 0x100_0000) -> *Task_Info {
+make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size := 0x10_0000) -> *Task_Info {
     task := cast(*Task_Info) map_memory(size_of(Task_Info));
 
     task.stack_bottom = map_memory(stack_size) + stack_size;
@@ -183,9 +190,9 @@ make_task :: (entry_point: (data: *void), startup_data: *void = null, stack_size
     #asm { get_cr3 cr3; }
     task.page_table = cr3;
 
-    tls := map_memory(0x10_0000);
+    tls := map_memory(0x1_0000);
     task.thread_storage = tls;
-    task.thread_storage_size = 0x10_0000;
+    task.thread_storage_size = 0x1_0000;
 
     return task;
 }
@@ -557,9 +564,17 @@ debug_exception :: (stack_data: *Interrupt_Data) #c_call {
 
 GetName :: (args: [] Any) -> string #expand {
     nothing: Any;
-    if args.count < 1 `return nothing; //`
+    if args.count < 1 {
+        print("Expected a name parameter.\n");
+        `return nothing; //`
+    }
+
     _name := args[0];
-    if _name.type.type != .STRING `return nothing; // `
+    if _name.type.type != .STRING {
+        print("Expected a name parameter.\n");
+        `return nothing; // `
+    }
+
     name := << cast(*string) _name.value_pointer;
     return name;
 }
@@ -593,6 +608,7 @@ cmd_debug_set_breakpoint :: (args: ..Any) -> Any {
         HexMode();
         if it.breakpoint {
             printf("Setting breakpoint for % at %\n", name, address);
+            shutdown_emulator();
             it.breakpoint_enabled = true;
         } /* else {
             printf("No linear address for breakpoint in % at %\n", name, address);

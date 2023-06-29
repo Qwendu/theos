@@ -165,7 +165,6 @@ Copy_Helper :: (data: *void, _info: *Type_Info, pointer_map: *Pointer_Map, follo
                 }
             } else {
                 // Dynamic array of one kind or another.
-                assert(info_array.relative_pointer_size == 0);  // @Incomplete: Relative pointer arrays not yet handled.
 
                 count := << cast(*s64) data;
 
@@ -199,7 +198,6 @@ Copy_Helper :: (data: *void, _info: *Type_Info, pointer_map: *Pointer_Map, follo
             }
         case .POINTER;
             info_pointer := cast(*Type_Info_Pointer) info;
-            assert(info_pointer.relative_pointer_size == 0);  // @Incomplete: Relative pointers not yet handled.
 
             dest := cast(**void) data;
             old_value_pointer := << dest;

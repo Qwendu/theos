@@ -3,6 +3,8 @@ using,except .["get_system_time"] Basic :: #import "Basic";
 #poke_name Basic  write_string;
 
 #import "String";
+#import "Deep_Copy";
+
 
 #import "Machine_X64";
 #import "Elf";
@@ -71,7 +73,7 @@ kernel_entry :: () {
         // cmos_enable_irq(true);
         // cmos_set_rate(15);
 
-        fpu_init();
+        init_fpu();
         acpi_init();
         hpet_init();
 
@@ -90,7 +92,6 @@ kernel_entry :: () {
             assert(boot_drive == null);
             boot_drive = it;
         }
-
 
         assert(!!boot_drive, "Could not find the boot disk. Only SATA disks are supported, not NVMe or USB.");
 
@@ -134,8 +135,8 @@ kernel_entry :: () {
         init_graphics(*boot_data);
         init_shell(font);
 
-        init_audio();
-        discover_sound_devices();
+        // init_audio();
+        // discover_sound_devices();
 
         startup := read_file("system/startup");
         commands := split(cast(string) startup, "\n");
@@ -156,6 +157,7 @@ kernel_entry :: () {
             move_mouse(mouse.position_x, mouse.position_y);
 
             clean_up_tasks();
+//            paint_screen();
 
             kernel_sleep_milliseconds(10);
         }
@@ -216,9 +218,12 @@ log :: (message: string, data: *void, info: Log_Info) {
 }
 
 assertion_failed :: (location: Source_Code_Location, message: string) {
+
     print("\nAssertion failure!\n  -> ");
     print(location.fully_pathed_filename, theme.accent);
     print(":");
+
+    context.print_style.default_format_int.base = 10;
     print(location.line_number, theme.accent);
 
     if message.count {
@@ -286,10 +291,22 @@ assert :: (condition: bool, message: string = "", call_site := #caller_location)
     }
 }
 
-shutdown_emulator :: () #no_context {
+shutdown_emulator :: () #no_context #expand {
     out(0xb004, cast(u16) 0x2000);
     out(0x0604, cast(u16) 0x2000);
     out(0x4004, cast(u16) 0x3400);
+}
+
+hardcore_log_buffer: [0x1000] u8;
+hardcore_log_cursor: int;
+
+hardcore_log :: (text: string) #c_call {
+    ctx: Context;
+    push_context,defer_pop ctx;
+
+    memcpy(hardcore_log_buffer.data + hardcore_log_cursor, text.data, text.count);
+    ahci_transfer_sectors(*disks[0], .WRITE, to_physical(hardcore_log_buffer.data), lba=0, sector_count=8);
+    hardcore_log_cursor += text.count + 1;
 }
 
 out :: (port: u16, value: $T) #no_context {
@@ -352,13 +369,13 @@ divru :: (dividend: $T, $$ divisor: T) -> T {
     return (dividend + (divisor - 1)) / divisor;
 }
 
-Mxcsr :: enum_flags u32 {
-    IE__invalid_operation_flag;
-    DE__denormal_flag;
-    ZE__divide_by_zero_flag;
-    OE__overflow_flag;
-    UE__underflow_flag;
-    PE__precision_flag;
+Mxcsr :: enum_flags u64 {
+    IE__invalid_operation;
+    DE__denormal;
+    ZE__divide_by_zero;
+    OE__overflow;
+    UE__underflow;
+    PE__precision;
     DAZ__denormals_are_zeros;
     IM__invalid_operation_mask;
     DM__denormal_operation_mask;
@@ -371,22 +388,8 @@ Mxcsr :: enum_flags u32 {
     FTZ__flush_to_zero;
 }
 
-fpu_init :: () {
-    mxcsr: Mxcsr;
-    pmxcsr := *mxcsr;
+init_fpu :: () {
 
-    ftz :: Mxcsr.FTZ__flush_to_zero;
-
-    #asm {
-//        stmxcsr [pmxcsr];
-//        or [pmxcsr], ftz;
-//        ldmxcsr [pmxcsr];
-    }
-
-    enable_simd();
-}
-
-enable_simd :: () {
     CR0_MP         :=   1 << 1;
     CR0_EM_CLEAR   := ~(1 << 2);
     CR4_OSFXSR     :=   1 << 9;
@@ -426,6 +429,17 @@ enable_simd :: () {
     //     or xcr0_l, 7;
     //     xsetbv xcr0_h, xcr0_l, index;
     // }
+
+    using mxcsr: Mxcsr;
+    pmxcsr := *mxcsr;
+
+    mask := IM__invalid_operation_mask | DM__denormal_operation_mask | ZM__divide_by_zero_mask | OM__overflow_mask | UM__underflow_mask | PM__precision_mask;
+
+    #asm {
+        stmxcsr [pmxcsr];
+        or.q [pmxcsr], mask;
+        ldmxcsr [pmxcsr];
+    }
 }
 
 BochsBreak :: () #expand {
@@ -439,6 +453,45 @@ kernel_sleep_milliseconds :: (ms: int) {
     current_task.sleep_until = get_system_time() + milliseconds_to_apollo(ms);
     current_task.state = .SLEEPING;
     yield();
+}
+
+
+
+Ia32_Model_Specific_Register :: enum {
+    APIC_BASE__apic_base      :: 0x0000_001b;
+    PAT__page_attribute_table :: 0x0000_0277;
+    EFER__extended_features   :: 0xc000_0080;
+    STAR__syscall_segment     :: 0xc000_0081;
+    LSTAR__syscall_address    :: 0xc000_0082;
+    FMASK__syscall_flags      :: 0xc000_0084;
+}
+
+write_msr :: (msr: Ia32_Model_Specific_Register, value: u64) {
+    high := value >> 32;
+    low := value & 0xffff_ffff;
+
+    #asm {
+        msr === c;
+        high === d;
+        low  === a;
+
+        wrmsr high, low, msr;
+    }
+}
+
+read_msr :: (msr: Ia32_Model_Specific_Register) -> u64 {
+    low: u64;
+    high: u64;
+
+    #asm {
+        msr === c;
+        high === d;
+        low === a;
+
+        rdmsr high, low, msr;
+    }
+
+    return low | (high << 32);
 }
 
 
@@ -614,6 +667,18 @@ idt_init :: () {
     #asm {
         lidt [address];
     }
+
+    // assert(check_feature(cpu.feature_leaves, .SYSCALL_SYSRET));
+
+    syscall_entry := cast(u64) cast(*void) () #foreign Interrupts "syscall_entry";
+    write_msr(.LSTAR__syscall_address, syscall_entry);
+    write_msr(.STAR__syscall_segment, 0x8_0000_0000);
+
+    EFER_SCE__syscall_enable :: 1;
+
+    efer := read_msr(.EFER__extended_features);
+    efer |= EFER_SCE__syscall_enable;
+    write_msr(.EFER__extended_features, efer);
 }
 
 Interrupts :: #library,no_dll "../.build/interrupt";
@@ -749,14 +814,9 @@ apic_init :: () {
     uncacheable_flags := READ_WRITE | PRESENT | CACHE_DISABLE;
     apic = map_memory(0x1000, physical_address = apic_acpi_header.local_apic_address, flags = uncacheable_flags);
 
-    MSR_APIC_BASE :: 0x1b;
-
-    #asm {
-        mov msr_name: gpr === c, MSR_APIC_BASE;
-        rdmsr high:, low:, msr_name;
-        or low, 0x800;
-        wrmsr high, low, msr_name;
-    }
+    apic_base := read_msr(.APIC_BASE__apic_base);
+    apic_base |= 0x800;
+    write_msr(.APIC_BASE__apic_base, apic_base); // apic base
 }
 
 
@@ -902,7 +962,6 @@ cmos_interrupt :: () #c_call {
 CMOS_BASE_FREQ :: 32768;
 
 formosa_calendar_to_apollo :: (ct: Calendar_Time) -> Apollo_Time {
-    using Basic;
     leap_year_count := leap_years_before(cast(s64) ct.year - 1) - leap_years_before(1970);
     year_difference := cast(s64) ct.year - 1970;
 
@@ -935,7 +994,6 @@ formosa_calendar_to_apollo :: (ct: Calendar_Time) -> Apollo_Time {
 }
 
 formosa_apollo_to_calendar :: (apollo: Apollo_Time) -> Calendar_Time {
-    using Basic;
     APOLLO_TIME_FOR_JAN_1_1970 :: Apollo_Time.{low=0xdbd87f0edb7c8000, high=0x300};
     milliseconds := to_milliseconds(apollo - APOLLO_TIME_FOR_JAN_1_1970);
 
@@ -1176,7 +1234,6 @@ hpet: struct {
     base_address: *void;
     base_period_femtoseconds: u64;
 
-    // The point of all this crap is to get theoretical 1 femtosecond precision from get_system_time, if the hardware happens to support it and the counter doesn't fully wrap around between interrupts
     ticks_per_interrupt: u64;
     total_ticks: Apollo_Time;
 
@@ -1366,6 +1423,8 @@ page_table_init :: () {
     page_dir[0] = 0x000_000 | cast(u64) PRESENT | READ_WRITE | PAGE_SIZE;
     page_dir[1] = 0x200_000 | cast(u64) PRESENT | READ_WRITE | PAGE_SIZE;
     page_dir[2] = 0x400_000 | cast(u64) PRESENT | READ_WRITE | PAGE_SIZE;
+    page_dir[3] = 0x600_000 | cast(u64) PRESENT | READ_WRITE | PAGE_SIZE;
+    page_dir[4] = 0x800_000 | cast(u64) PRESENT | READ_WRITE | PAGE_SIZE;
 
     pml4_base := to_physical(pml4.data);
     #asm {
@@ -1386,6 +1445,13 @@ page_table_init :: () {
         or high, 0x1;
         wrmsr high, low, msr_name;
     }
+
+    /*
+        pat := read_msr(.PAT__page_attribute_table);
+        pat &= 0xffff_fff0_ffff_ffff;
+        pat |= 0x0000_0001_0000_0000;
+        write_msr(.PAT__page_attribute_table, pat);
+    */
 
     new_bitmap_space := map_memory(total_memory / 0x1000 / 8);
     memcpy(new_bitmap_space, bitmap_space.data, bitmap_space.count);
@@ -1590,11 +1656,13 @@ get_physical_address :: (virtual_address: *void) -> u64, present: bool {
 
 #program_export
 page_fault_handler :: (stack_data: *Interrupt_Data) #c_call {
-    stack_data = xx (cast(*u8) stack_data + 8);
 
-    push_context Context.{} {
+    stack_data = xx (cast(*u8) stack_data + 16);
+
+    ctx: Context;
+    push_context ctx {
         print("An exception has occurred:  ");
-        print("Page fault\n\n", theme.accent);
+        print("Page fault\n\n");
 
         cr2: u64;
         #asm {
@@ -1684,7 +1752,7 @@ init_physical_allocator :: () {
     bitmap_space.data = initial_bitmap_space.data;
     bitmap_space.count = initial_bitmap_space.count;
 
-    for 0..bitmap_entries_for_limit(0xa00_000) - 1 {
+    for 0..bitmap_entries_for_limit(0xa0_0000) - 1 {
         bitmap_space[it] = 0xffff_ffff_ffff_ffff;
     }
 
@@ -1693,21 +1761,22 @@ init_physical_allocator :: () {
     };
 
     init_bit_array(*pm_bitmap, xx initial_bitmap_space.count * 64);
-    lowest_free_bit = 0xa00_000 / 0x1000;
+    lowest_free_bit = 0xa0_0000 / 0x1000;
     memory_map := get_memory_map();
 
-    available_memory -= 0xa00_000;
+    available_memory -= 0xa0_0000;
 
     // Todo: handle overlapping regions
     for memory_map {
         total_memory += xx it.limit;
 
         if  it.type == .NONE continue;
-        if  it.base < 0x100_000 continue;
+        if  it.base < 0x10_0000 continue;
         if (it.base % 0x1000 != 0) || (it.limit % 0x1000 != 0) continue;
 
         if  it.type != .AVAILABLE {
             reserve_physical_region(it.base, it.limit);
+//            if it.base < 0x70_0000 && it.base > 0x20_0000 print("AAAA");
         } else {
             available_memory += xx it.limit;
         }
@@ -1821,15 +1890,18 @@ load_program :: (file: [] u8, parameters: .. Any) -> *Task_Info {
     }
 
     if header.type == .MINIMAL {
-        task_data := map_memory(file.count);
-        minimal_base := header.minimal_header;
+        printf("Minimal executables temporarily not supported\n");
+        return null;
 
-        memcpy(task_data, minimal_base, file.count);
-
-        task := make_task(start_process_minimal, task_data);
-        task.state = .SLEEPING;
-        task.page_table = create_address_space();
-        return task;
+//        task_data := map_memory(file.count);
+//        minimal_base := header.minimal_header;
+//
+//        memcpy(task_data, minimal_base, file.count);
+//
+//        task := make_task(start_process_minimal, task_data);
+//        task.state = .SLEEPING;
+//        task.page_table = create_address_space();
+//        return task;
     }
 
     table_size := header.elf_offset - size_of(Formosa_Exe_Header);
@@ -2005,8 +2077,26 @@ Syscall_Numbers :: enum {
     BLOCKING_SUBMIT_AUDIO_BUFFER :: 0x35;
 }
 
+Syscall_Data :: struct {
+    r15:  u64;
+    r14:  u64;
+    r13:  u64;
+    r12:  u64;
+    r11:  u64;
+    r10:  u64;
+    r9 :  u64;
+    r8 :  u64;
+    rbp:  u64;
+    rdi:  u64;
+    rsi:  u64;
+    rdx:  u64;
+    rcx:  u64;
+    rbx:  u64;
+    rax:  u64;
+}
+
 #program_export
-syscall_interrupt :: (data: *Interrupt_Data) #c_call {
+syscall_interrupt :: (data: *Syscall_Data) #c_call {
     using Syscall_Numbers;
     syscall_context: Context;
     syscall_context.allocator.proc = allocate_memory;
@@ -2035,11 +2125,15 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
     }
 
     push_context syscall_context {
+        context.print_style.default_format_struct.use_newlines_if_long_form = true;
+
+        // data.rcx = data.r9;
+        syscall_number := cast(Syscall_Numbers) data.rax;
+
         old := current_task.the_context;
         current_task.the_context = *context;
         defer current_task.the_context = old;
 
-        syscall_number := cast(Syscall_Numbers) data.rax;
 
         if syscall_number == {
           case GET_SYSTEM_PARAMETERS;
@@ -2061,7 +2155,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
           case WRITE_STRING;
             text: string;
             text.data = xx data.rbx;
-            text.count = xx data.rcx;
+            text.count = xx data.r9;
             print(text);
 
           case READ_STRING;
@@ -2069,7 +2163,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
 
             prompt: string;
             prompt.data = xx data.rbx;
-            prompt.count = xx  data.rcx;
+            prompt.count = xx  data.r9;
 
             clear_text_viewer(*shell.command_text);
             write_to_text_viewer(*shell.command_text, tprint("% > ", prompt));
@@ -2085,7 +2179,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                     result.count -= prompt.count + 1;
 
                     data.rbx = xx result.data;
-                    data.rcx = xx result.count;
+                    data.r9 = xx result.count;
                     break;
                 }
 
@@ -2099,14 +2193,12 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             #asm { cli; }
 
           case OUTPUT;
-            #import "Deep_Copy";
-
             allocator_data: struct {
                 space: *void;
                 watermark: int;
             }
 
-            allocator_data.space = map_memory(0x1_0000);
+            allocator_data.space = map_memory(0x10_0000);
             context.allocator.proc = (mode: Allocator_Mode, size: s64, old_size: s64, old_buffer: *void, user_data: *void) -> *void {
                 if mode != .ALLOCATE return null;
 
@@ -2123,16 +2215,18 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             };
 
             context.allocator.data = *allocator_data;
-            ti := cast(*Type_Info) data.rcx;
+            ti := cast(*Type_Info) data.r9;
 
-            current_task.process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.rcx);
+            current_task.process.output_data.value_pointer = Deep_Copy(cast(*void) data.rbx, cast(*Type_Info) data.r9);
+
             if ti.type == .ARRAY {
-                current_task.process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Array));
+                current_task.process.output_data.type = Deep_Copy(cast(*void) data.r9, type_info(Type_Info_Array));
             } else if ti.type == .STRUCT {
-                current_task.process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_Struct));
+                current_task.process.output_data.type = Deep_Copy(cast(*void) data.r9, type_info(Type_Info_Struct));
             } else if ti.type == .STRING {
-                current_task.process.output_data.type = Deep_Copy(cast(*void) data.rcx, type_info(Type_Info_String));
+                current_task.process.output_data.type = Deep_Copy(cast(*void) data.r9, type_info(Type_Info_String));
             }
+
             context.allocator.proc = allocate_memory;
 
           case INPUT;
@@ -2140,11 +2234,11 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             << target = current_task.process.input_data;
 
           case MAP_MEMORY;
-            buffer := map_memory(xx data.rcx);
+            buffer := map_memory(xx data.r9);
             << cast(**void) data.rbx = buffer;
 
           case UNMAP_MEMORY;
-            unmap_memory(xx data.rbx, xx data.rcx);
+            unmap_memory(xx data.rbx, xx data.r9);
 
           case GET_MESSAGE;
             result := cast(*Message) data.rbx;
@@ -2162,7 +2256,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
 
           case CREATE_WINDOW;
             width := cast(int) data.rdi;
-            height := cast(int) data.rcx;
+            height := cast(int) data.r9;
             target := cast(*Window_Handle) data.rdx;
 
             << target = create_window(width, height);
@@ -2194,17 +2288,17 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             if !w.exists return;
             if w.owner != current_task return;
 
-            << cast(**u32) data.rcx = w.backbuffer;
+            << cast(**u32) data.r9 = w.backbuffer;
 
           case READ_FILE;
-            name := << cast(*string) data.rcx;
+            name := << cast(*string) data.r9;
 
             file := read_file(name);
             target := cast(*[] u8) data.rdx;
             << target = file;
 
           case WRITE_FILE;
-            name:      string = << cast(*string) data.rcx;
+            name:      string = << cast(*string) data.r9;
             file_data: [] u8  = << cast(*[] u8)  data.rbx;
 
             data.rax = xx write_file(name, file_data);
@@ -2216,10 +2310,10 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
           case LIST_DIRECTORY;
             name := << cast(*string) data.rbx;
             res: Filesystem_Result;
-            << cast(*[] File_Status) data.rcx, res = list_directory(name);
+            << cast(*[] File_Status) data.r9, res = list_directory(name);
             if res == .item_is_wrong_kind {
                 print("List directory called on a file!\n");
-                << cast(*[] File_Status) data.rcx = .[];
+                << cast(*[] File_Status) data.r9 = .[];
             }
 
           case GET_THEME;
@@ -2253,7 +2347,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
                 device_list[it].pci = pci_device_info[it];
                 device_list[it].type = .PCI;
             }
-            << cast(*int) data.rcx = pci_device_count;
+            << cast(*int) data.r9 = pci_device_count;
 
           case GET_SPACE_NEEDED_FOR_DEVICE_LIST;
             << cast(*int) data.rbx = pci_device_count * size_of(Hardware_Device);
@@ -2267,7 +2361,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
           case SLEEP;
             until: Apollo_Time;
             until.high = cast(s64) data.rbx;
-            until.low = data.rcx;
+            until.low = data.r9;
 
             until += get_system_time();
 
@@ -2280,7 +2374,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             task := make_task(entry);
             task.process.name = tprint("% thread", current_task.process.name);
             array_add(*current_task.subtasks, task);
-            << cast(*u64) data.rcx = cast(u64) task;
+            << cast(*u64) data.r9 = cast(u64) task;
 
           case JOIN_THREAD;
             task := cast(*Task_Info) data.rbx;
@@ -2296,22 +2390,22 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
 
                 if hit == w && valid_alive_and_owned(w) {
                     << cast(*int) data.rdi = mouse.position_x - windows[w].blitter.draw.x;
-                    << cast(*int) data.rcx = mouse.position_y - windows[w].blitter.draw.y;
+                    << cast(*int) data.r9 = mouse.position_y - windows[w].blitter.draw.y;
                 } else {
                     << cast(*int) data.rdi = -1;
-                    << cast(*int) data.rcx = -1;
+                    << cast(*int) data.r9 = -1;
                 }
 
             } else {
                 << cast(*int) data.rdi = mouse.position_x;
-                << cast(*int) data.rcx = mouse.position_y;
+                << cast(*int) data.r9 = mouse.position_y;
             }
 
           case GET_WINDOW_SIZE;
             w := cast(Window_Handle) data.rdx;
             if valid_alive_and_owned(w) {
                 << cast(*int) data.rdi = windows[w].blitter.draw.width;
-                << cast(*int) data.rcx = windows[w].blitter.draw.height;
+                << cast(*int) data.r9 = windows[w].blitter.draw.height;
             }
 
           case ACQUIRE_SYSTEM_MIXER_CHANNEL;
@@ -2331,10 +2425,10 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
 
           case CONNECT_AUDIO_ENDPOINTS;
             source, exists1 := pool_get(*audio_source_pool, cast(s64) data.rbx);
-            sink, exists2   := pool_get(*audio_sink_pool,   cast(s64) data.rcx);
+            sink, exists2   := pool_get(*audio_sink_pool,   cast(s64) data.r9);
 
             if exists1 && exists2 {
-                source.sink_id = cast(s64) data.rcx;
+                source.sink_id = cast(s64) data.r9;
                 sink.source_id = cast(s64) data.rbx;
             }
 
@@ -2363,7 +2457,7 @@ syscall_interrupt :: (data: *Interrupt_Data) #c_call {
             source, exists := pool_get(*audio_source_pool, source_id);
 
             if exists {
-                buffer := cast(*u16) data.rcx;
+                buffer := cast(*u16) data.r9;
                 memcpy(source.buffer, buffer, AUDIO_BLOCKSIZE * size_of(u16));
 
                 while !source.buffer_consumed {
@@ -2478,14 +2572,11 @@ Timeout :: (code: Code, message := "", time := 1000) #expand {
 
 
 
-
-
-
 #program_export
 invalid_opcode_exception :: (stack_data: *Interrupt_Data) #c_call {
 //    stack_data = xx (cast(*u8) stack_data);
-
-    push_context Context.{} {
+ctx: Context;
+    push_context ctx {
 //      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
         print("An exception has occurred:  ");
         print("Invalid Opcode\n\n", theme.accent);
@@ -2531,11 +2622,30 @@ invalid_opcode_exception :: (stack_data: *Interrupt_Data) #c_call {
 }
 
 #program_export
+simd_float_exception_fault :: (stack_data: *Interrupt_Data) #c_call {
+    ctx: Context;
+    ctx.allocator.proc = allocate_memory;
+    ctx.print_style.default_format_int.base = 16;
+    push_context,defer_pop ctx;
+
+    using mxcsr: Mxcsr;
+    pmxcsr := *mxcsr;
+
+    #asm {
+        stmxcsr [pmxcsr];
+    }
+
+    hardcore_log(tprint("0x%\n", mxcsr));
+    shutdown_emulator();
+}
+
+#program_export
 gp_exception :: (stack_data: *Interrupt_Data) #c_call {
     stack_data = xx (cast(*u8) stack_data + 8);
     error_code := << cast(*u64) stack_data;
 
-    push_context Context.{} {
+    ctx: Context;
+    push_context ctx {
 //      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
         print("An exception has occurred:  ");
         print("General Protection Fault #GP\n\n", theme.accent);
@@ -2614,7 +2724,8 @@ gp_exception :: (stack_data: *Interrupt_Data) #c_call {
 zero_division :: (stack_data: *Interrupt_Data) #c_call {
 //    stack_data = xx (cast(*u8) stack_data + 8);
 
-    push_context Context.{} {
+    ctx: Context;
+    push_context ctx {
 //      print("The error code is  "); print_hex(cast(u32) << error_code); print(".\n");
         print("An exception has occurred:  ");
         print("Division by Zero\n\n", theme.accent);

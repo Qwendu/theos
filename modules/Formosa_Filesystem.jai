@@ -76,7 +76,7 @@ maybe_create_or_grow_extent :: (extent: *Extent, bytes_required: int) -> space_c
         bit: int;
 
         while true {
-            // Find the first long enough run of free disk blocks... we should switch to choosing randomised starting points for finding runs, to maximise chances of being able to grow extents later
+            // Find the first long enough run of free disk blocks
             if !fs_bit_array[bit] {
                 contiguous_bits_found += 1;
             } else {
@@ -147,7 +147,6 @@ read_data_from_extent :: (extent: Extent, data: *u8, count: int) -> read: int {
         return min(count, blocks_to_read * Constants.block_size);
     }
 
-    // Read extent function callback may not be implemented by the user, in which case we read the extent block-by-block
     for 0..blocks_to_read - 1 {
         data_pointer := data + it * Constants.block_size;
         location := FS_BASE_ADDRESS + (extent.block_index + it) * Constants.block_size;
@@ -220,7 +219,7 @@ find_info_node :: (path: [] string) -> Info_Node_Loc, bool {
     defer free(current_info_node_block);
 
     for step: path {
-        assert(step.count < 32, tprint("File name too long: %, in the future arbitrary length filenames will be supported", step));
+        assert(step.count < 32, tprint("File name too long: % > 32, in the future arbitrary length filenames will be supported", step));
         // Read the directory blocks of the current info node and iterate them to find the next directory info node
         read_block(loc.block, current_info_node_block, fs_user_data);
         current_info_node := cast(*Info_Node) current_info_node_block + loc.index;
@@ -319,7 +318,7 @@ create_item :: (path_string: string, directory: bool) -> Filesystem_Result {
         new_entry := cast(*Directory_Entry) block + new_entry_index;
         << new_entry = .{};
 
-        assert(name.count < 32, tprint("File name too long: %, in the future arbitrary length filenames will be supported", name));
+        assert(name.count < 32, tprint("File name too long: % > 32, in the future arbitrary length filenames will be supported", name));
         memcpy(new_entry.name.data, name.data, name.count);
 
         new_node_block := cast(*Info_Node) alloc(Constants.block_size);
@@ -380,7 +379,7 @@ filesystem_cache: struct {
     array: [3] Disk_Block;
 } #align Constants.block_size;
 
-FS_BASE_ADDRESS :: 0x100_000;
+FS_BASE_ADDRESS :: 0x200_000;
 FS_BLOCKSIZE :: 4096;
 
 fs_user_data: *User_Datatype;

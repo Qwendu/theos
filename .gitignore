@@ -93,3 +93,6 @@ filesystem/programs/music_player
 filesystem/getrect_data
 filesystem/programs/jaibreak
 filesystem/programs/jaibreak_exe
+filesystem/programs/interrupt_test
+modules/Deep_Copy_Fancy.jai
+DUMP.bin

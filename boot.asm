@@ -318,7 +318,7 @@ load_kernel_dbs:
     mov ecx, sectors_per_load * sector_size
     mov esi, kernel_load_buffer
     mov edi, ebx
-    add edi, 0x500_000
+    add edi, kernel_offset
 
     a32 rep movsb
 
@@ -389,6 +389,10 @@ switch_to_long_mode:
     mov [di + 0x5008], eax
     add eax, 0x200000
     mov [di + 0x5010], eax
+    add eax, 0x200000
+    mov [di + 0x5018], eax
+    add eax, 0x200000
+    mov [di + 0x5020], eax
 
     mov eax, page_present | page_write | page_size
     mov [di + 0x2000], eax
@@ -396,6 +400,10 @@ switch_to_long_mode:
     mov [di + 0x2008], eax
     add eax, 0x200000
     mov [di + 0x2010], eax
+    add eax, 0x200000
+    mov [di + 0x2018], eax
+    add eax, 0x200000
+    mov [di + 0x2020], eax
 
     mov al, 0xff
     out 0xa1, al
@@ -454,14 +462,14 @@ long_mode_start:
     mov gs, ax
     mov ss, ax
 
-    mov rbp, 0xffffffff80300008
+    mov rbp, 0xffffffff80600000
     mov rsp, rbp
 
     mov rcx, 0xffffffff80100000
   .clear_loop:
     mov byte [rcx], 0
     inc rcx
-    cmp rcx, 0xffffffff80400000
+    cmp rcx, 0xffffffff80600000
     jne .clear_loop
 
     cld
@@ -487,7 +495,7 @@ long_mode_start:
     jmp .loop
 
   .end:
-    jmp kernel_entry_point
+    call kernel_entry_point
 
 
 

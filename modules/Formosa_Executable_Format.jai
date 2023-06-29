@@ -17,12 +17,12 @@ Formosa_Exe_Header :: struct {
 
     // required_cpu_privilege_level: int;
 
-    required_cpu_features: []~s16 x86_Feature_Flag;
-    recommended_cpu_features: []~s16 x86_Feature_Flag;
+    // required_cpu_features: []~s16 x86_Feature_Flag;
+    // recommended_cpu_features: []~s16 x86_Feature_Flag;
 
     union {
         elf_offset: int;
-        minimal_header: *~s64 Minimal_Exe_Header;
+       // minimal_header: *~s64 Minimal_Exe_Header;
     }
 }
 
@@ -34,8 +34,8 @@ Formosa_Exe_Type :: enum {
 }
 
 Minimal_Exe_Header :: struct {
-    data_section_in_the_file: []~s64 u8;
-    code_section_in_the_file: []~s64 u8;
+    // data_section_in_the_file: []~s64 u8;
+    // code_section_in_the_file: []~s64 u8;
     zero_section_size: int;
 
     data_section_virtual_address: *void;
@@ -44,6 +44,6 @@ Minimal_Exe_Header :: struct {
 }
 
 Exe_Entry_Point :: struct {
-    name: string~s64;
+    // name: string~s64;
     virtual_address: *void;
 }

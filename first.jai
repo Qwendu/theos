@@ -45,19 +45,21 @@ exceptions: [] struct {
 interrupt_handlers: [] struct {
     handler: string;
     slot: int;
+    has_error_code: bool;
 } = .[
-    .{ "zero_division", 0x00 },
-    .{ "debug_exception", 0x01 },
-    .{ "breakpoint_exception", 0x03 },
-    .{ "invalid_opcode_exception", 0x06 },
-    .{ "gp_exception", 0x0d },
-    .{ "hpet_interrupt",  0x20 },
-    .{ "ps2_interrupt",  0x21 },
-    .{ "cmos_interrupt", 0x28 },
-    .{ "ps2_mouse"    ,  0x2c },
-    .{ "ata_interrupt",  0x2e },
-    .{ "syscall_interrupt", 0x80 },
-    .{ "page_fault_handler", 0x0e },
+    .{ "zero_division", 0x00, false },
+    .{ "debug_exception", 0x01, false },
+    .{ "breakpoint_exception", 0x03, false },
+    .{ "invalid_opcode_exception", 0x06, false },
+    .{ "gp_exception", 0x0d, false },
+    .{ "simd_float_exception_fault", 0x13, false },
+    .{ "hpet_interrupt",  0x20, false },
+    .{ "ps2_interrupt",  0x21, false },
+    .{ "cmos_interrupt", 0x28, false },
+    .{ "ps2_mouse"    ,  0x2c, false },
+    .{ "ata_interrupt",  0x2e, false },
+    .{ "syscall_interrupt", 0x80, false },
+    .{ "page_fault_handler", 0x0e, true },
 ];
 
 #if OS == .LINUX {
@@ -108,9 +110,9 @@ interrupt_handlers: [] struct {
 
     version_info: Version_Info;
     compiler_get_version_info(*version_info);
-    if memcmp(*version_info, *Version_Info.{0, 1, 55}, size_of(Version_Info)) != 0 {
+    if memcmp(*version_info, *Version_Info.{0, 1, 69}, size_of(Version_Info)) != 0 {
         using version_info;
-        print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.055, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
+        print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.069, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
         print("However there's a chance it works anyway, so continuing\n");
     }
 
@@ -313,7 +315,10 @@ interrupt_handlers: [] struct {
                 print_to_builder(*builder, "extern %\n", it.handler);
                 print_to_builder(*builder, "global %_wrapper\n", it.handler);
                 print_to_builder(*builder, "align 0x8\n%_wrapper:\n", it.handler);
-                print_to_builder(*builder, "\tcli\n\tpush_all\n\tmov rdi, rsp\n\tcall %\n\tpop_all\n\tiretq\n\n", it.handler);
+                if it.has_error_code print_to_builder(*builder, "\tsub rsp, 8\n");
+                print_to_builder(*builder, "\tcli\n\tpush_all\n\tmov rdi, rsp\n\tcall %\n\tpop_all\n", it.handler);
+                if it.has_error_code print_to_builder(*builder, "\tadd rsp, 8\n");
+                print_to_builder(*builder, "\tiretq\n\n");
             }
 
             try_to_write_file(".build/interrupt.asm", builder_to_string(*builder));
@@ -321,10 +326,10 @@ interrupt_handlers: [] struct {
             shell("nasm .build/interrupt.asm -o .build/interrupt.so -f elf64 -wall");
         }
 
-        BOOTLOADER_SECTOR_COUNT :: 5;
-        assert(BOOTLOADER_SECTOR_COUNT * 0x200 + 0x7c00 < BOOT_DATA_AREA, "There is not enough space for the bootloader to go before the boot data area.");
         BOOT_DATA_AREA          :: 0x9000;
         BOOT_DATA_SIZE          :: 0x1000;
+        BOOTLOADER_SECTOR_COUNT :: 5;
+        assert(BOOTLOADER_SECTOR_COUNT * 0x200 + 0x7c00 < BOOT_DATA_AREA, "There is not enough space for the bootloader to go before the boot data area.");
 
         PAGE_TABLE_ADDRESS      :: BOOT_DATA_AREA + BOOT_DATA_SIZE;
         PAGE_TABLE_SIZE         :: 0x6000;
@@ -477,10 +482,12 @@ interrupt_handlers: [] struct {
                 append(*generated_asm, tprint("vesa_height equ 0x%\n", VESA_HEIGHT));
                 append(*generated_asm, tprint("vesa_depth  equ 0x%\n", VESA_DEPTH));
 
+                kernel_offset := 0x60_0000; // Where the kernel is loaded in high memory before the elf sections are moved to their actual VMAs. This is just above the stack.
+                append(*generated_asm, tprint("\nkernel_offset         equ 0x%\n", kernel_offset));
+
                 append(*generated_asm, "\nkernel_section_table:\n");
                 kernel_binary: String_Builder;
 
-                kernel_offset := 0x500_000;
                 section_count: int;
                 for 0..elf_header.e_phnum - 1 {
                     base := elf.data + elf_header.e_phoff;
@@ -496,7 +503,7 @@ interrupt_handlers: [] struct {
                     append(*generated_asm, tprint("    dq 0x%\t\t; Bytes to zero clear\n",  header.p_memsz));
                     append(*generated_asm, tprint("    dq 0x%\t\t; Bytes to copy\n",        header.p_filesz));
 
-                    assert(header.p_vaddr + max(header.p_filesz, header.p_memsz) < 0xffff_ffff_8030_0000);
+                    assert(header.p_vaddr + max(header.p_filesz, header.p_memsz) < 0xffff_ffff_8000_0000 + cast(u64) kernel_offset - 0x10_0000);
                     append(*kernel_binary, elf.data + header.p_offset, xx header.p_filesz);
                     kernel_offset += xx header.p_filesz;
                 }
@@ -1162,12 +1169,33 @@ build_formosa_app :: (name: string, optimize: bool = false) -> bool {
 }
 
 ISR_DECLARATION :: #string ISR
-isr_slot_0x% :: (stack_data: *Interrupt_Data) #c_call {
+isr_slot_0x%1 :: (stack_data: *Interrupt_Data) #c_call {
+    // data := "0123456789abcdefghijklmnopqrstuvwxyz";
+    // data.count = 0x%1 + 1;
+    // hardcore_log(data);
+
+//    using mxcsr: Mxcsr;
+//    pmxcsr := *mxcsr;
+//
+//    #asm { stmxcsr [pmxcsr]; }
+//
+//    if mxcsr & IE__invalid_operation  hardcore_log("Invalid operation");
+//    if mxcsr & DE__denormal           hardcore_log("Denormal");
+//    if mxcsr & ZE__divide_by_zero     hardcore_log("Div by zero");
+//    if mxcsr & OE__overflow           hardcore_log("Overflow");
+//    if mxcsr & UE__underflow          hardcore_log("Underflow");
+//    if mxcsr & PE__precision          hardcore_log("Precision");
+//
+//    if 0x%1 == 0x13 {
+//        hardcore_log(tprint("%\n", stack_data.ip));
+//        return;
+//    }
+
     stack_data = xx (cast(*u8) stack_data + 8);
     c: Context;
     push_context c {
         print("\n\n   An exception has occurred:  ", theme.primary);
-        print("%\n", theme.accent);
+        print("%2\n", theme.accent);
 
         print("\n   Interrupt frame:\n");
         print("   RIP:    "); print_hex(stack_data.ip);    print("\n");
@@ -1252,6 +1280,28 @@ task_switch:
 
     iretq
 
+
+
+global syscall_entry
+
+align 0x10
+syscall_entry:
+    push rcx
+    mov r8, rsp
+    and rsp, ~0xf
+
+    pushfq
+    cli
+    push_all
+
+    mov rdi, rsp
+    call syscall_interrupt
+
+    pop_all
+    popfq
+
+    mov rsp, r8
+    ret
 END;
 
 

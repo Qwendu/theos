@@ -228,7 +228,15 @@ init_graphics :: (boot_data: Boot_Data) {
     cursor_graphic = parse_pnm(cursor_file);
 }
 
+recursion: int;
+
 paint_screen :: () {
+    recursion += 1;
+    paint_screen_internal();
+    recursion = 0;
+}
+
+paint_screen_internal :: () {
     if !graphics.initialized return;
     g := *graphics;
 
@@ -287,6 +295,19 @@ move_mouse :: (new_x: int, new_y: int, always := false) {
     // Paint the new location
     start = new_x + g.screen.width * new_y;
 
+    blend :: (target: u32, source: u32, t: float) -> u32 #expand {
+        result: u32;
+        c :: (color: u32, offset: u32) -> u32 #expand {
+            return (color >> offset) & 0xff;
+        }
+
+        result  = (cast(u32) (cast(float) c(target, 16) * (1 - t) + cast(float) c(source, 16) * t)) << 16;
+        result |= (cast(u32) (cast(float) c(target,  8) * (1 - t) + cast(float) c(source,  8) * t)) << 8;
+        result |= (cast(u32) (cast(float) c(target,  0) * (1 - t) + cast(float) c(source,  0) * t));
+
+        return result;
+    }
+
     cursor: int;
     for y: 0..cursor_size-1 {
         if new_y + y >= g.screen.height break;
@@ -310,19 +331,6 @@ move_mouse :: (new_x: int, new_y: int, always := false) {
 
     old_mouse_x = new_x;
     old_mouse_y = new_y;
-
-    blend :: (target: u32, source: u32, t: float) -> u32 #expand {
-        result: u32;
-        c :: (color: u32, offset: u32) -> u32 #expand {
-            return (color >> offset) & 0xff;
-        }
-
-        result  = (cast(u32) (cast(float) c(target, 16) * (1 - t) + cast(float) c(source, 16) * t)) << 16;
-        result |= (cast(u32) (cast(float) c(target,  8) * (1 - t) + cast(float) c(source,  8) * t)) << 8;
-        result |= (cast(u32) (cast(float) c(target,  0) * (1 - t) + cast(float) c(source,  0) * t));
-
-        return result;
-    }
 }
 
 

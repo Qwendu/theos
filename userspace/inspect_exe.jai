@@ -12,6 +12,18 @@ main :: (file_name: string) {
     }
     builder: String_Builder;
 
+    add_text :: (format: string, args: .. Any, color: u32 = xx,no_check -1) #expand {
+        _color := color;
+        if _color == xx,no_check -1  _color = theme.foreground;
+
+        a: Rich_Text.Attribute;
+        a.start_position = builder_string_length(*builder);
+        a.color = _color;
+
+        array_add(*attr, a);
+        print_to_builder(*builder, format, .. args);
+    }
+
     attr: [..] Rich_Text.Attribute;
     array_reserve(*attr, 300);
 
@@ -106,16 +118,4 @@ main :: (file_name: string) {
     add_text("| ");
     add_text(text, color = theme.accent);
     add_text("\n\n");
-
-    add_text :: (format: string, args: .. Any, color: u32 = xx,no_check -1) #expand {
-        _color := color;
-        if _color == xx,no_check -1  _color = theme.foreground;
-
-        a: Rich_Text.Attribute;
-        a.start_position = builder_string_length(*builder);
-        a.color = _color;
-
-        array_add(*attr, a);
-        print_to_builder(*builder, format, .. args);
-    }
 }

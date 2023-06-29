@@ -298,7 +298,7 @@ init_shell :: (font: Pnm) {
     shell.command_text = create_text_viewer(font);
 
     add_screen_draw_list_entry(*shell.text, 50, 50, "shell output");
-    shell.text.draw.width = 1200;
+    shell.text.draw.width = graphics.screen.width - 100;
     shell.text.draw.height = graphics.screen.height - 110;
 
     add_screen_draw_list_entry(*shell.command_text, 50, graphics.screen.height - 50, "command");
@@ -955,6 +955,21 @@ Command_Step :: struct {
 
 parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
 
+    stringify :: (type: Token.Type) -> string {
+        if #complete type == {
+            case .NONE; return "a \"None\" token. This is an internal parser error.";
+            case .IDENT; return "an identifier.";
+            case .STRING; return "a string.";
+            case .INT; return "an integer.";
+            case .COMMA; return "a comma.";
+            case .VERTICAL_BAR; return "a vertical bar.";
+            case .POUND_SIGN; return "a hash symbol, or number sign, or pound sign, or whatever you want to call it. But not a hash-tag, because that doesn't make sense. In the term \"hashtag\", \"tag\" refers to the phrase that comes after the hash sign. This is obvious, come on.";
+            case .EOT; return "the end of the command input.";
+            case .ERROR_TOKEN; return "a token we don't understand. Try putting the item in \"\" quotes if this should be a character in a string.";
+            case; return "an invalid token. This is an internal parser error.";
+        }
+    }
+
     generate_parse_error :: (format: string, args: .. Any) #expand {
         print("Command parse error:\n");
         printf(format, .. args);
@@ -1028,7 +1043,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
             }
 
             else {
-                generate_parse_error("Expected a parameter, but got token of type %\n", tok.type);
+                generate_parse_error("Expected a parameter, but got %\n", stringify(tok.type));
                 return false, steps, tokens;
             }
 
@@ -1044,7 +1059,7 @@ parse_command :: (command: string) -> bool, [] Command_Step, tokens: [] Token {
             if tok.type == .EOT return true, steps, tokens;
 
             if tok.type != .VERTICAL_BAR {
-                generate_parse_error("Expected a comma or vertical bar, but got token of type %\n", tok.type);
+                generate_parse_error("Expected a comma or vertical bar, but got %\n", stringify(tok.type));
                 return false, steps, tokens;
             }
         }
@@ -1123,7 +1138,7 @@ tokenize_command :: (command: string) -> [..] Token {
             Emit(.VERTICAL_BAR);
 
           case #char "#";
-            Emit(.EOT);
+            Emit(.POUND_SIGN);
             return result;
 
           case 0; #through;
@@ -1241,6 +1256,16 @@ represent_bytes :: (bytes: u64) -> string {
     // 
     // gb := mb / 1024;
     // return tprint("% gb", gb);
+}
+
+Rich_Text :: struct {
+    text: string;
+    attributes: [] Attribute;
+
+    Attribute :: struct {
+        start_position: int;
+        color: Color;
+    }
 }
 
 print_ipc_data :: (value: Any) {
@@ -1498,16 +1523,6 @@ print_ipc_data :: (value: Any) {
 
     else {
         printf("%\n", value);
-    }
-
-    Rich_Text :: struct {
-        text: string;
-        attributes: [] Attribute;
-
-        Attribute :: struct {
-            start_position: int;
-            color: Color;
-        }
     }
 
     print("\n");

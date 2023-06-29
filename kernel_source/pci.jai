@@ -96,6 +96,26 @@ pci_scan_all_devices :: () {
 }
 
 scan_bus :: (bus: u32) {
+
+    AddDevice :: (function: int) #expand {
+        info: Pci_Device_Info = ---;
+        info.bus       = xx `bus;
+        info.index     = xx `device;
+        info.function  = xx function;
+        info.header    = `header; // `
+
+        pci_device_info[pci_device_count] = info;
+        pci_device_count += 1;
+        
+        if `header.class == .BRIDGE && `header.subclass == 4 {
+            bridge_info := pci_device_info[pci_device_count - 1];
+            register := pci_read_config_register(bridge_info, 0x6);
+            secondary_bus_number := (register >> 8) & 0xff;
+            scan_bus(secondary_bus_number);
+        }
+
+    }
+
     for device: 0..PCI_MAX_DEVICES-1 {
         header := pci_read_header(xx bus, xx device, 0);
         if header.vendor_id == PCI_VENDOR_NO_DEVICE continue;
@@ -108,26 +128,8 @@ scan_bus :: (bus: u32) {
                 if header.vendor_id == PCI_VENDOR_NO_DEVICE continue;
 
                 AddDevice(function);
-
-                if header.class == .BRIDGE && header.subclass == 4 {
-                    bridge_info := pci_device_info[pci_device_count - 1];
-                    register := pci_read_config_register(bridge_info, 0x6);
-                    secondary_bus_number := (register >> 8) & 0xff;
-                    scan_bus(secondary_bus_number);
-                }
             }
         }
-    }
-
-    AddDevice :: (function: int) #expand {
-        info: Pci_Device_Info = ---;
-        info.bus       = xx `bus;
-        info.index     = xx `device;
-        info.function  = xx function;
-        info.header    = `header; // `
-
-        pci_device_info[pci_device_count] = info;
-        pci_device_count += 1;
     }
 }
 
@@ -658,7 +660,7 @@ init_ahci_controller :: (info: Pci_Device_Info, drives: *[..] Mass_Storage_Devic
 
     ahci.GHC__global_host_control |= .AE__ahci_enable;
 
-    assert(ahci.CAP__host_capabilities & .S64A__64bit_addressing > 0, "AHCI controller without 64bit addressing not supported");
+    assert(ahci.CAP__host_capabilities & .S64A__64bit_addressing > 0, "AHCI controller without 64-bit addressing not supported");
 
     if (ahci.CAP__host_capabilities & .SAM__supports_ahci_only) == 0 {
         ahci.GHC__global_host_control |= .HR__hba_reset;

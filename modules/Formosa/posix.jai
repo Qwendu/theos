@@ -271,11 +271,11 @@ crt_nanosleep :: (ts: *timespec, _rem: *timespec) -> s32 #c_call {
         p := *c; // We would like to not have to do this, but #asm doesn't let us put c yet.
 
         #asm {
-            mov a_low:,  [a + 0];
-            mov a_high:, [a + 8];
+            mov a_low:,  [*a + 0];
+            mov a_high:, [*a + 8];
 
-            mov b_low:,  [b + 0];
-            mov b_high:, [b + 8];
+            mov b_low:,  [*b + 0];
+            mov b_high:, [*b + 8];
 
             mov [p + 0], a_low;
             mov [p + 8], a_high;

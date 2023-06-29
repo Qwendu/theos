@@ -8,17 +8,18 @@ femtosleep :: (fs: u64) {
 }
 
 sleep :: (time: Apollo) #no_context {
-    using Syscall_Numbers;
 
     low := time.low;
     high := time.high;
 
-    #asm {
-        mov rbx: gpr === b, high;
-        mov rcx: gpr === c, low;
-        mov rax: gpr === a, SLEEP;
+    syscall_number := Syscall_Numbers.SLEEP;
 
-        int 0x80;
+    #asm SYSCALL_SYSRET {
+        high === b;
+        low === 9;
+        syscall_number === a;
+
+        syscall rcx:, r11:, low, syscall_number, r8: gpr === 8, high ;
     }
 }
 
@@ -31,129 +32,141 @@ System_Params :: struct {
 }
 
 get_system_parameters :: (params: *System_Params) {
-    using Syscall_Numbers;
 
-    #asm {
-        mov rbx: gpr === b, params;
-        mov rax: gpr === a, GET_SYSTEM_PARAMETERS;
+    syscall_number := Syscall_Numbers.GET_SYSTEM_PARAMETERS;
+    #asm SYSCALL_SYSRET {
+        params === b;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, params, syscall_number, r8: gpr === 8 ;
     }
 }
 
 create_thread :: (entry_point: (*void)) -> u64 {
-    using Syscall_Numbers;
-    handle: u64;
+handle: u64;
     p_handle := *handle;
 
-    #asm {
-        mov rbx: gpr === b, entry_point;
-        mov rcx: gpr === c, p_handle;
-        mov rax: gpr === a, CREATE_THREAD;
+    syscall_number := Syscall_Numbers.CREATE_THREAD;
 
-        int 0x80;
+    #asm SYSCALL_SYSRET {
+        entry_point === b;
+        p_handle === 9;
+        syscall_number === a;
+
+        syscall rcx:, r11:, entry_point, p_handle, syscall_number, r8: gpr === 8 ;
     }
 
     return handle;
 }
 
 join_thread :: (thread_handle: u64) {
-    using Syscall_Numbers;
 
-    #asm {
-        mov rbx: gpr === b, thread_handle;
-        mov rax: gpr === a, JOIN_THREAD;
+    syscall_number := Syscall_Numbers.JOIN_THREAD;
 
-        int 0x80;
+    #asm SYSCALL_SYSRET {
+        thread_handle === b;
+        syscall_number === a;
+
+        syscall rcx:, r11:, thread_handle, syscall_number, r8: gpr === 8 ;
     }
 }
 
 formosa_get_time :: () -> Apollo #no_context {
-    using Syscall_Numbers;
 
+    syscall_number := Syscall_Numbers.GET_TIME;
+    
     time: Apollo;
     target := *time;
-    #asm {
-        mov rbx: gpr === b, target;
-        mov rax: gpr === a, GET_TIME;
+    #asm SYSCALL_SYSRET {
+        target === b;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, target, syscall_number, r8: gpr === 8 ;
     }
     return time;
 }
 
 output :: (value: Any) {
-    using Syscall_Numbers;
 
     value_pointer := value.value_pointer;
     type := value.type;
 
-    #asm {
-        mov rbx: gpr === b, value_pointer;
-        mov rcx: gpr === c, type;
-        mov rax: gpr === a, OUTPUT;
+    syscall_number := Syscall_Numbers.OUTPUT;
+    
+    #asm SYSCALL_SYSRET {
+        value_pointer === b;
+        type === 9;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, value_pointer, type, syscall_number, r8: gpr === 8 ;
     }
 }
 
 input :: () -> Any {
-    using Syscall_Numbers;
 
     result: Any;
     target := *result;
 
-    #asm {
-        mov rbx: gpr === b, target;
-        mov rax: gpr === a, INPUT;
+    syscall_number := Syscall_Numbers.INPUT;
+    
+    #asm SYSCALL_SYSRET {
+        target === b;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, target, syscall_number, r8: gpr === 8 ;
     }
 
     return result;
 }
 
 yield :: () {
-    using Syscall_Numbers;
 
-    #asm {
-        mov rax: gpr === a, YIELD;
-        int 0x80;
+    syscall_number := Syscall_Numbers.YIELD;
+    
+    #asm SYSCALL_SYSRET {
+        syscall_number === a;
+
+        syscall rcx:, r11:, syscall_number, r8: gpr === 8 ;
     }
 }
 
 exit :: () {
-    using Syscall_Numbers;
 
-    #asm {
-        mov rax: gpr === a, EXIT;
-        int 0x80;
+    syscall_number := Syscall_Numbers.EXIT;
+    
+    #asm SYSCALL_SYSRET {
+        syscall_number === a;
+
+        syscall rcx:, r11:, syscall_number, r8: gpr === 8 ;
     }
 }
 
 get_theme :: () -> Theme {
-    using Syscall_Numbers;
 
+    syscall_number := Syscall_Numbers.GET_THEME;
+    
     theme: Theme;
     target := *theme;
-    #asm {
-        mov rbx: gpr === b, target;
-        mov rax: gpr === a, GET_THEME;
+    #asm SYSCALL_SYSRET {
+        target === b;
+        syscall_number === a;
 
-        int 0x80;
+
+        syscall rcx:, r11:, target, syscall_number, r8: gpr === 8;
     }
     return theme;
 }
 
 set_theme :: (theme: Theme) {
-    using Syscall_Numbers;
 
+    syscall_number := Syscall_Numbers.SET_THEME;
+    
     source := *theme;
-    #asm {
-        mov rbx: gpr === b, source;
-        mov rax: gpr === a, SET_THEME;
+    #asm SYSCALL_SYSRET {
+        source === b;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, source, syscall_number, r8: gpr === 8;
     }
 }
 
@@ -166,70 +179,75 @@ Filesystem_Result :: enum s64 {
 }
 
 read_file :: (name: string) -> [] u8, Filesystem_Result {
-    using Syscall_Numbers;
 
     p_name := *name;
 
+    syscall_number := Syscall_Numbers.READ_FILE;
+    
     data: [] u8;
     target := *data;
-    result: Filesystem_Result;
-    #asm {
-        mov rbx: gpr === d, target;
-        mov rcx: gpr === c, p_name;
-        mov rax: gpr === a, READ_FILE;
+    // result: Filesystem_Result;
+    #asm SYSCALL_SYSRET {
+        syscall_number === a;
+        target === d;
+        p_name === 9;
 
-        int 0x80;
-        mov result, rax;
+        syscall rcx:, r11:, syscall_number, r8: gpr === 8, target, p_name;
+        // mov result, rax;
     }
+
     return data, /* result */ .success;
 }
 
 write_file :: (name: string, data: [] u8) -> Filesystem_Result {
-    using Syscall_Numbers;
-    result: Filesystem_Result;
+result: Filesystem_Result;
 
+    syscall_number := Syscall_Numbers.WRITE_FILE;
+    
     _data := *data;
     _name := *name;
-    #asm {
-        mov rbx: gpr === b, _data;
-        mov rcx: gpr === c, _name;
-        mov rax: gpr === a, WRITE_FILE;
+    #asm SYSCALL_SYSRET {
+        _data === b;
+        _name === 9;
+        syscall_number === a;
 
-        int 0x80;
-        mov result, rax;
+        syscall rcx:, r11:, _data, _name, syscall_number, r8: gpr === 8;
+        // mov result, rax;
     }
     return /* result */ .success;
 }
 
 create_file :: (name: string) -> Filesystem_Result {
-    using Syscall_Numbers;
     result: Filesystem_Result;
 
+    syscall_number := Syscall_Numbers.CREATE_FILE;
+    
     _name := *name;
-    #asm {
-        mov rbx: gpr === b, _name;
-        mov rax: gpr === a, CREATE_FILE;
+    #asm SYSCALL_SYSRET {
+        _name === b;
+        syscall_number === a;
 
-        int 0x80;
-        mov result, rax;
+        syscall rcx:, r11:, _name, syscall_number, r8: gpr === 8;
+        // mov result, rax;
     }
     return /* result */ .success;
 }
 
 list_directory :: (name: string) -> [] File_Status, Filesystem_Result {
-    using Syscall_Numbers;
     result: Filesystem_Result;
 
     info: [] File_Status;
     _name := *name;
     _info := *info;
 
-    #asm {
-        mov rbx: gpr === b, _name;
-        mov rcx: gpr === c, _info;
-        mov rax: gpr === a, LIST_DIRECTORY;
+    syscall_number := Syscall_Numbers.LIST_DIRECTORY;
+    
+    #asm SYSCALL_SYSRET {
+        _name === b;
+        _info === 9;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, _name, _info, syscall_number, r8: gpr === 8;
     }
 
     return info, /* result */ .success;
@@ -240,72 +258,78 @@ Window_Handle :: s64;
 INVALID_WINDOW_HANDLE : Window_Handle : -1;
 
 create_window :: (width: int, height: int) -> Window_Handle {
-    using Syscall_Numbers;
 
+    syscall_number := Syscall_Numbers.CREATE_WINDOW;
+    
     result: Window_Handle;
     target := *result;
-    #asm {
-        mov rbx: gpr === di, width;
-        mov rcx: gpr === c, height;
-        mov rdx: gpr === d, target;
-        mov rax: gpr === a, CREATE_WINDOW;
+    #asm SYSCALL_SYSRET {
+        width === di;
+        height === 9;
+        target === d;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, width, height, target, syscall_number, r8: gpr === 8;
     }
     return result;
 }
 
 close_window :: (window: Window_Handle) {
-    using Syscall_Numbers;
 
-    #asm {
-        mov rbx: gpr === b, window;
-        mov rax: gpr === a, CLOSE_WINDOW;
+    syscall_number := Syscall_Numbers.CLOSE_WINDOW;
+    
+    #asm SYSCALL_SYSRET {
+        window === b;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, window, syscall_number, r8: gpr === 8;
     }
 }
 
 get_window_buffer :: (window: Window_Handle) -> *u32 {
-    using Syscall_Numbers;
 
+    syscall_number := Syscall_Numbers.GET_WINDOW_BUFFER;
+    
     result: *u32;
     target := *result;
-    #asm {
-        mov rcx: gpr === c, target;
-        mov rbx: gpr === b, window;
-        mov rax: gpr === a, GET_WINDOW_BUFFER;
+    #asm SYSCALL_SYSRET {
+        target === 9;
+        window === b;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, target, window, syscall_number, r8: gpr === 8;
     }
     return result;
 }
 
 repaint :: () {
-    using Syscall_Numbers;
 
-    #asm {
-        mov rax: gpr === a, REPAINT;
-        int 0x80;
+    syscall_number := Syscall_Numbers.REPAINT;
+    
+    #asm SYSCALL_SYSRET {
+        syscall_number === a;
+
+        syscall rcx:, r11:, syscall_number, r8: gpr === 8 ;
     }
 }
 
 write_string :: (text: string) #no_context {
-    using Syscall_Numbers;
 
+    syscall_number := Syscall_Numbers.WRITE_STRING;
+    
     count := text.count;
     data := text.data;
-    #asm {
-        mov rbx: gpr === b, data;
-        mov rcx: gpr === c, count;
-        mov rax: gpr === a, WRITE_STRING;
 
-        int 0x80;
+    #asm SYSCALL_SYSRET {
+        data === b;
+        count === 9;
+        syscall_number === a;
+
+        syscall rcx:, r11:, data, count, syscall_number, r8: gpr === 8;
     }
 }
 
 read_string :: (prompt: string) -> string {
-    using Syscall_Numbers;
 
     result: string;
     result_count := *result.count;
@@ -314,143 +338,119 @@ read_string :: (prompt: string) -> string {
     prompt_count := prompt.count;
     prompt_data := prompt.data;
 
-    #asm {
-        mov rbx: gpr === b, prompt_data;
-        mov rcx: gpr === c, prompt_count;
-        mov rax: gpr === a, READ_STRING;
+    syscall_number := Syscall_Numbers.READ_STRING;
+    
+    #asm SYSCALL_SYSRET {
+        prompt_data === b;
+        prompt_count === 9;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, prompt_data, prompt_count, syscall_number, r8: gpr === 8;
 
-        mov [result_count], rcx;
-        mov [result_data],  rbx;
+        // mov [result_count], rcx;
+        // mov [result_data],  rbx;
     }
 
     return result;
 }
 
 map_memory :: (size: int) -> *void #no_context {
-    using Syscall_Numbers;
 
+    syscall_number := Syscall_Numbers.MAP_MEMORY;
+    
     buffer: *void;
     target := *buffer;
-    #asm {
-        mov rbx: gpr === b, target;
-        mov rcx: gpr === c, size;
-        mov rax: gpr === a, MAP_MEMORY;
 
-        int 0x80;
+    #asm SYSCALL_SYSRET {
+        target === b;
+        size === 9;
+        syscall_number === a;
+
+        syscall rcx:, r11:, target, size, syscall_number, r8: gpr === 8;
     }
+
     return buffer;
 }
 
 unmap_memory :: (size_bytes: int, buffer: *void) {
-    using Syscall_Numbers;
 
-    #asm {
-        mov rbx: gpr === b, size_bytes;
-        mov rcx: gpr === c, buffer;
-        mov rax: gpr === a, UNMAP_MEMORY;
+    syscall_number := Syscall_Numbers.UNMAP_MEMORY;
+    
+    #asm SYSCALL_SYSRET {
+        size_bytes === b;
+        buffer === 9;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, size_bytes, buffer, syscall_number, r8: gpr === 8;
     }
 }
 
 get_message :: () -> Message {
-    using Syscall_Numbers;
 
     message: Message;
     target := *message;
 
-    #asm {
-        mov rbx: gpr === b, target;
-        mov rax: gpr === a, GET_MESSAGE;
+    syscall_number := Syscall_Numbers.GET_MESSAGE;
+    
+    #asm SYSCALL_SYSRET {
+        target === b;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, target, syscall_number, r8: gpr === 8;
     }
     return message;
 }
 
 wait_for_message :: () -> Message {
-    using Syscall_Numbers;
 
+    syscall_number := Syscall_Numbers.WAIT_FOR_MESSAGE;
+    
     message: Message;
     target := *message;
-    #asm {
-        mov rbx: gpr === b, target;
-        mov rax: gpr === a, WAIT_FOR_MESSAGE;
+    #asm SYSCALL_SYSRET {
+        target === b;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, target, syscall_number, r8: gpr === 8;
     }
     return message;
 }
 
-// get_device_list :: (space: *void) -> [] Hardware_Device {
-//     using Syscall_Numbers;
-// 
-//     count: int;
-//     _count := *count;
-//     #asm {
-//         mov rcx: gpr === c, _count;
-//         mov rbx: gpr === b, space;
-//         mov rax: gpr === a, GET_DEVICE_LIST;
-// 
-//         int 0x80;
-//     }
-// 
-//     result: [] Hardware_Device;
-//     result.count = count;
-//     result.data = cast(*Hardware_Device) space;
-//     return result;
-// }
-// 
-// get_space_needed_for_device_list :: () -> int {
-//     using Syscall_Numbers;
-// 
-//     result: int;
-//     _result := *result;
-//     #asm {
-//         mov rbx: gpr === b, _result;
-//         mov rax: gpr === a, GET_SPACE_NEEDED_FOR_DEVICE_LIST;
-// 
-//         int 0x80;
-//     }
-// 
-//     return result;
-// }
-
 get_mouse_position :: (window := INVALID_WINDOW_HANDLE) -> int, int {
-    using Syscall_Numbers;
 
     x, y: int;
     px, py := *x, *y;
     w := window;
 
-    #asm {
-        mov rdi: gpr === di, px;
-        mov rcx: gpr === c, py;
-        mov rdx: gpr === d, w;
-        mov rax: gpr === a, GET_MOUSE_POSITION;
+    syscall_number := Syscall_Numbers.GET_MOUSE_POSITION;
+    
+    #asm SYSCALL_SYSRET {
+        px === di;
+        py === 9;
+        w === d;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, px, py, w, syscall_number, r8: gpr === 8;
     }
 
     return x, y;
 }
 
 get_window_size :: (window: Window_Handle) -> int, int {
-    using Syscall_Numbers;
 
     x, y: int;
     px, py := *x, *y;
     w := window;
 
-    #asm {
-        mov rdi: gpr === di, px;
-        mov rcx: gpr === c, py;
-        mov rdx: gpr === d, w;
-        mov rax: gpr === a, GET_WINDOW_SIZE;
+    syscall_number := Syscall_Numbers.GET_WINDOW_SIZE;
+    
+    #asm SYSCALL_SYSRET {
+        px === di;
+        py === 9;
+        w === d;
+        syscall_number === a;
 
-        int 0x80;
+        syscall rcx:, r11:, px, py, w, syscall_number, r8: gpr === 8;
     }
 
     return x, y;

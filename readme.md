@@ -1,5 +1,5 @@
 
-#### Current Jai version: 0.1.055
+#### Current Jai version: 0.1.060
 
 ### Build
 
