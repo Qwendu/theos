@@ -329,12 +329,12 @@ waking_tasks: struct {}
 for_expansion :: (tasks: *type_of(waking_tasks), body: Code, flags: For_Flags) #expand {
     #assert(flags == 0);
 
-    `it_index := -1; //`
+    `it_index := -1;
     task := *the_first_task;
 
     while true {
         it_index += 1;
-        `it := task; //`
+        `it := task;
 
         if task == *the_first_task && (it_index != 0 || the_first_task.next == *the_first_task) {
             break;
@@ -537,10 +537,11 @@ breakpoint_exception :: (stack_data: *Interrupt_Data) #c_call {
 #program_export
 debug_exception :: (stack_data: *Interrupt_Data) #c_call {
     push_context make_context() {
-        reason: DR6__Debug_Status;
+        _reason: DR6__Debug_Status;
         #asm {
-            get_dr6 reason;
+            get_dr6 _reason;
         }
+        reason := _reason;
 
         if reason & .BS__single_step {
             printf("Stepping \"%\".\nRIP = 0x%\n", current_task.process.name, cast(*void) stack_data.ip);

@@ -18,6 +18,7 @@ using,except .["get_system_time"] Basic :: #import "Basic";
 #load "shell.jai";
 #load "task.jai";
 #load "audio.jai";
+#load "acpi.jai";
 
 cpu: Cpu_X86;
 
@@ -147,6 +148,16 @@ kernel_entry :: () {
 
             yield(); kernel_sleep_milliseconds(20);
         }
+
+        /*
+        aml_code: [] u8;
+        aml_code.data = cast(*u8) (acpi.dsdt + 1);
+        aml_code.count = acpi.dsdt.length - size_of(type_of(<< acpi.dsdt));
+
+        acpi_parse_definition_block(aml_code);
+
+        tpm_init();
+        */
 
         paint_screen();
 
@@ -1070,6 +1081,8 @@ boot_time: Apollo_Time;
 
 acpi: struct {
     root_table: *Acpi_Table_Header;
+    fadt: *Acpi_Fixed_Description_Table;
+    dsdt: *Acpi_Table_Header;
     version: int;
 }
 
@@ -1098,7 +1111,30 @@ Acpi_Table_Header :: struct {
     oem_revision: u32;
     creator_id: u32;
     creator_revision: u32;
+} #no_padding
+
+Acpi_Fixed_Description_Table :: struct {
+    #as header: Acpi_Table_Header;
+    firmware_ctrl: u32;
+    dsdt_address: u32;
+
+    // Does not handle 64bit dsdt address
+    // https://uefi.org/htmlspecs/ACPI_Spec_6_4_html/05_ACPI_Software_Programming_Model/ACPI_Software_Programming_Model.html?highlight=dsdt#fadt-format
 }
+
+Acpi_Generic_Address_Structure :: struct {
+    address_space_id: enum u8 {
+        main_memory :: 0x0;
+        io_space    :: 0x1;
+        // There are more of these
+        // https://uefi.org/htmlspecs/ACPI_Spec_6_4_html/05_ACPI_Software_Programming_Model/ACPI_Software_Programming_Model.html#generic-address-structure-gas
+    };
+
+    register_bit_width: u8;
+    register_bit_offset: u8;
+    access_size: u8;
+    address: u64 #align 1;
+} #no_padding
 
 acpi_init :: () {
     rsdp := acpi_find_root_table();
@@ -1117,6 +1153,15 @@ acpi_init :: () {
 
     assert(acpi_validate_table(rsdt));
     acpi.root_table = rsdt;
+
+    acpi.fadt = cast(*Acpi_Fixed_Description_Table) acpi_get_table_by_signature("FACP");
+    assert(acpi.fadt != null, "FADT not found");
+
+    phys = cast(u64) acpi.fadt.dsdt_address;
+    virt = map_memory(0x4000, physical_address = phys);
+
+    offset_in_page = phys % 0x1000;
+    acpi.dsdt = cast(*Acpi_Table_Header) (virt + offset_in_page);
 }
 
 acpi_get_table_by_signature :: (sig: string) -> *Acpi_Table_Header {
@@ -1196,11 +1241,55 @@ acpi_validate_table :: (header: *Acpi_Table_Header) -> bool {
 
 
 
+
+Tpm_Registers :: struct {
+    tpm_access: u8;
+    reserved_0: [7] u8;
+    int_enable: u32;
+    int_vector: u8;
+    reserved_1: [3] u8;
+    int_status: u32;
+    intf_capability: u32;
+    sts: u32;
+    reserved_2: [8] u8;
+    data_fifo: u32;
+    reserved_3: [8] u8;
+    interface_id: u32;
+}
+
+Tpm_Acpi_Table :: struct {
+    #as header: Acpi_Table_Header;
+    platform_class: u16;
+    reserved: u16;
+    LAML__log_area_min_length: u64;
+    LASA__log_area_start: u64;
+    spec_revision: u16;
+    device_flags: u8;
+    interrupt_flags: u8;
+    GPE: u8;
+    reserved_2: [3] u8;
+    global_system_interrupt: u32;
+    base_address: Acpi_Generic_Address_Structure;
+}
+
+tpm_init :: () {
+    tpm_acpi_header := acpi_get_table_by_signature("TCPA");
+    assert(tpm_acpi_header != null, "TPM is not available");
+//    printf("Found tpm acpi header %\n", << tpm_acpi_header);
+
+    // table := cast(*Tpm_Acpi_Table) tpm_acpi_header;
+    // HexMode();
+    // printf("Acpi table: %\n", table);
+    // printf("Start method: %\n", table.start_method);
+}
+
+
+
 Hpet_Acpi_Table :: struct {
     #as header: Acpi_Table_Header;
     hardware_revision: u8;
     flags: u8;
-    vendor: u16 #align 1;
+    vendor: u16;
     address_space: enum u8 { MAIN_MEMORY :: 0; IO :: 1; };
     stuff: [3] u8;
     base_address: u64 #align 1;

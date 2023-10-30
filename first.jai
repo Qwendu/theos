@@ -110,9 +110,9 @@ interrupt_handlers: [] struct {
 
     version_info: Version_Info;
     compiler_get_version_info(*version_info);
-    if memcmp(*version_info, *Version_Info.{0, 1, 69}, size_of(Version_Info)) != 0 {
+    if memcmp(*version_info, *Version_Info.{0, 1, 76}, size_of(Version_Info)) != 0 {
         using version_info;
-        print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.069, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
+        print("\e[31;1mThis is the wrong version of the compiler! You need 0.1.076, but have %.%.%\e[0m\n", major, minor, formatInt(micro, minimum_digits = 3));
         print("However there's a chance it works anyway, so continuing\n");
     }
 
@@ -173,6 +173,7 @@ interrupt_handlers: [] struct {
         shell("VBoxManage modifyvm formosa --biosbootmenu disabled");
         shell("VBoxManage modifyvm formosa --audiocontroller ac97");
         shell("VBoxManage modifyvm formosa --audioout on");
+        shell("VBoxManage modifyvm formosa --tpm-type 2.0");
         shell("VBoxManage setextradata formosa \"CustomVideoMode1\" \"2560x1440x32\"", dont_quote = true);
         shell("VBoxManage setextradata formosa \"CustomVideoMode2\" \"1920x1080x32\"", dont_quote = true);
         shell("VBoxManage setextradata formosa \"CustomVideoMode3\" \"1440x900x32\"", dont_quote = true);
@@ -352,7 +353,6 @@ interrupt_handlers: [] struct {
 
             options.array_bounds_check = .OFF;
             options.cast\_bounds_check = .OFF;
-            options.math\_bounds_check = .OFF;
             options.null_pointer_check = .OFF;
             options.enable_bytecode_inliner = false;
             options.dead_code_elimination = .ALL;
@@ -909,12 +909,11 @@ build_formosa_app :: (name: string, optimize: bool = false) -> bool {
 
         options.disable_redzone = true;
 
-        if optimize set_optimization_level(*options, 3, 0);
+//        if optimize set_optimization_level(*options, 3, 0);
 
         options.stack_trace = true;
         options.array_bounds_check = .OFF;
         options.cast\_bounds_check = .OFF;
-        options.math\_bounds_check = .OFF;
         options.null_pointer_check = .OFF;
         options.dead_code_elimination = .MODULES_ONLY;
 
