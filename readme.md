@@ -1,6 +1,9 @@
 
 #### Current Jai version: 0.1.076
 
+
+
+
 ### Build
 
 VirtualBox or physical hardware is recommended over QEMU for performance reasons.
@@ -14,6 +17,14 @@ You have to compile on linux. I usually compile in WSL and then run it on window
 The `filesystem/` directory will be the root of the filesystem on the disk image. You can add files there if you want to access them from within the operating system. You can then use `jai-linux first.jai - no_kernel` to add them to the disk image without recompiling everything.
 
 If you have questions or comments please message me on discord: dlandahl#8582
+
+## Git Submodules
+
+To get all the git submodules:
+```
+git submodule init
+git submodule update --recursive
+```
 
 ### Screenshot
 ![](screenshot.png)

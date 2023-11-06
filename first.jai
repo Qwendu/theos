@@ -899,7 +899,9 @@ build_formosa_app :: (name: string, optimize: bool = false) -> bool {
 
     print("Compiling \"%\"\n", name);
     {
-        w := compiler_create_workspace("Formosa User Application");
+		workspace_name := sprint("User Application '%'", name);
+		defer  free(workspace_name);
+        w := compiler_create_workspace(workspace_name);
         options := get_build_options(w);
         options.output_executable_name = name;
         options.intermediate_path = ".build/";
